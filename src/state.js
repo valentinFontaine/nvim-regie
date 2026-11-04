@@ -56,3 +56,14 @@ export function ptyExited() {
 export function markRead(snap) {
   return snap.state === 'done_unread' ? { state: 'idle', activity: '' } : snap;
 }
+
+/** Esc en plein tour : aucun hook ne part, c'est le transcript qui le dit. Seuls running/needs_you sont concernés. */
+export function interrupted(snap) {
+  return snap.state === 'running' || snap.state === 'needs_you' ? { state: 'idle', activity: '' } : snap;
+}
+
+/** Ligne écrite par claude dans le JSONL quand l'utilisateur interrompt (vérifié sur 2.1.318). */
+export function isInterruptItem(item) {
+  return !!item && item.kind === 'text' && item.role === 'user'
+    && typeof item.text === 'string' && item.text.startsWith('[Request interrupted by user');
+}

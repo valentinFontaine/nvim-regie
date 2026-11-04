@@ -4,7 +4,7 @@ import pty from 'node-pty';
 import { TranscriptTail } from './transcript.js';
 import { NvimBridge, pasteSequence } from './nvim.js';
 import { cleanEnv } from './env.js';
-import { initialState, next as nextState, markRead as markReadState, ptyExited } from './state.js';
+import { initialState, next as nextState, markRead as markReadState, ptyExited, interrupted, isInterruptItem } from './state.js';
 
 const MAX_EXCERPT = 200;
 const sameFile = (a, b) => typeof a === 'string' && typeof b === 'string'
@@ -85,6 +85,7 @@ export class Session {
           this.items.push(...batch);
           if (this.items.length > MAX_ITEMS) this.items.splice(0, this.items.length - MAX_ITEMS);
           this.#emit({ type: 'transcript', items: batch });
+          this.noteTranscriptItems(batch);
           this.#pushAnswer();
         },
       });
@@ -162,6 +163,21 @@ export class Session {
       excerpt = '';
     }
     this.#setSnap(nextState(this.snap, payload), excerpt);
+    // /clear et /resume : SessionStart n'existe pas en HTTP, SessionEnd arrive avec reason (mesuré).
+    if (payload.hook_event_name === 'SessionEnd' && (payload.reason === 'clear' || payload.reason === 'resume')) {
+      this.#resetConversation();
+    }
+  }
+
+  /** Esc en plein tour : pas de hook, mais le transcript porte « [Request interrupted by user] ». */
+  noteTranscriptItems(batch) {
+    if (batch.some(isInterruptItem)) this.#setSnap(interrupted(this.snap));
+  }
+
+  #resetConversation() {
+    this.items = [];
+    this.answer = '';
+    this.#emit({ type: 'transcript-reset' });
   }
 
   markRead() {
@@ -174,9 +190,7 @@ export class Session {
     const file = this.spec.transcript.accept(given);
     if (!file || sameFile(file, this.tail.file)) return;
     this.tail.retarget(file);
-    this.items = [];
-    this.answer = '';
-    this.#emit({ type: 'transcript-reset' });
+    this.#resetConversation();
   }
 
   subscribe(fn) {

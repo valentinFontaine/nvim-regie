@@ -78,3 +78,14 @@ test('describeActivity : cible selon l\'outil, tronquée, une seule ligne', () =
   assert.equal(describeActivity(undefined, {}), '');
   assert.equal(describeActivity('Read', null), 'Read');
 });
+
+import { interrupted } from '../src/state.js';
+
+test('interrupted : running et needs_you → idle ; les autres états inchangés', () => {
+  assert.deepEqual(interrupted({ state: 'running', activity: 'x' }), { state: 'idle', activity: '' });
+  assert.equal(interrupted({ state: 'needs_you', activity: 'x' }).state, 'idle');
+  for (const st of ['done_unread', 'idle', 'error']) {
+    const s = { state: st, activity: '' };
+    assert.equal(interrupted(s), s);
+  }
+});

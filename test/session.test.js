@@ -174,3 +174,58 @@ test('transcript_path différent (/clear, /resume) : le suivi bascule sur le nou
   assert.deepEqual(s.items.map((i) => i.text), ['nouveau']);
   m.killAll();
 });
+
+test('SessionEnd reason=clear ou resume : conversation vidée côté serveur et transcript-reset diffusé', async () => {
+  for (const reason of ['clear', 'resume']) {
+    const m = new SessionManager(echoer);
+    const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+    const got = [];
+    s.subscribe((msg) => got.push(msg));
+    s.items.push({ kind: 'text', role: 'user', text: 'ancien' });
+    s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+    s.applyHook({ hook_event_name: 'SessionEnd', reason });
+    assert.ok(got.some((x) => x.type === 'transcript-reset'), reason);
+    assert.deepEqual(s.items, []);
+    assert.equal(s.snap.state, 'idle');
+    m.killAll();
+  }
+});
+
+test('SessionEnd d\'une autre raison : conversation conservée', () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.items.push({ kind: 'text', role: 'user', text: 'gardé' });
+  s.applyHook({ hook_event_name: 'SessionEnd', reason: 'prompt_input_exit' });
+  assert.equal(s.items.length, 1);
+  m.killAll();
+});
+
+test('message « [Request interrupted by user] » dans le transcript : running → idle', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'regie-i-')), 't.jsonl');
+  const m = new SessionManager({ ...echoer, transcript: { resolve: () => (fs.existsSync(file) ? file : null), intervalMs: 20 } });
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+  assert.equal(s.snap.state, 'running');
+  const user = (text) => JSON.stringify({ type: 'user', uuid: text, message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n';
+  fs.writeFileSync(file, user('Écris un poème'));
+  await wait(300);
+  assert.equal(s.snap.state, 'running', 'un prompt ordinaire ne change rien');
+  fs.appendFileSync(file, user('[Request interrupted by user]'));
+  await until(() => s.snap.state === 'idle');
+  assert.equal(got.filter((x) => x.type === 'state').at(-1).state, 'idle');
+  m.killAll();
+});
+
+test('interruption : un état done_unread ou error n\'est pas écrasé', () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.applyHook({ hook_event_name: 'Stop' });
+  s.noteTranscriptItems([{ kind: 'text', role: 'user', text: '[Request interrupted by user]' }]);
+  assert.equal(s.snap.state, 'done_unread');
+  m.killAll();
+});

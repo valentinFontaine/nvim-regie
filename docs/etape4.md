@@ -30,8 +30,17 @@
 - Le jeton n'existe que dans l'URL passée en argument à `claude` (jamais sur disque).
 - `transcript_path` reçu n'est suivi que s'il est `<racine des projets>/<dossier>/<uuid>.jsonl` (`acceptTranscript`).
 
-## À vérifier à la main (non établi par la doc)
+## Mesures faites sur un vrai claude 2.1.318 (hooks HTTP journalisés)
 
-- `Stop` se déclenche-t-il sur Esc en plein tour ? Sinon la session resterait `running`.
-- `/clear` puis un prompt : la conversation suit-elle le nouveau fichier ?
-- Les hooks de `~/.claude/settings.json` tournent toujours (fusion).
+- **/clear** : `SessionEnd` arrive ~1 s après avec `reason=clear` ; `SessionStart` n'arrive jamais en HTTP ;
+  le `session_id` change au prompt suivant. → le serveur vide la conversation sur `SessionEnd` (clear/resume),
+  sans attendre le prochain prompt.
+- **Esc en plein tour** : **aucun hook** (ni `Stop`). Le badge restait « en cours ». Mais le JSONL reçoit une
+  ligne user « [Request interrupted by user] » → `interrupted()` repasse running/needs_you à `idle`.
+- Esc dans la page : tant que le focus est dans Neovim, Esc va à Neovim, pas à claude (voir en-suspens).
+
+## À vérifier à la main
+
+- Esc dans le tiroir terminal : le badge doit repasser à « au repos ».
+- /clear : l'affichage doit se vider tout de suite.
+- Les hooks de `~/.claude/settings.json` tournent toujours (fusion, non rejoué).
