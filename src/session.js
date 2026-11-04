@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import pty from 'node-pty';
 import { TranscriptTail } from './transcript.js';
 import { NvimBridge, pasteSequence } from './nvim.js';
+import { cleanEnv } from './env.js';
 
 const MAX_BUFFER = 200 * 1024;
 const MAX_ITEMS = 5000;
@@ -41,7 +42,7 @@ export class Session {
       cols,
       rows,
       cwd: project.path,
-      env: process.env,
+      env: cleanEnv(),
       useConpty: true,
       useConptyDll: true,
     });

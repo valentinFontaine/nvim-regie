@@ -28,10 +28,23 @@ local function setup()
     if vim.g.regie_chan then vim.rpcnotify(vim.g.regie_chan, 'regie_send') end
   end, { desc = 'nvim-regie : envoyer le prompt' })
 
-  vim.keymap.set('n', '<leader>r', function()
+  local prompt_win = vim.api.nvim_get_current_win()
+  vim.wo[prompt_win].winbar = ' Prompt : ' .. send_key .. ' envoie à Claude (pas de :w, rien à sauvegarder)'
+
+  -- Bascule : ouvre la dernière réponse (lecture seule) en split, ou la ferme si elle est déjà ouverte.
+  local function toggle_answer()
+    for _, w in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(w) == answer then
+        vim.api.nvim_win_close(w, true)
+        return
+      end
+    end
     vim.cmd('botright split')
     vim.api.nvim_win_set_buf(0, answer)
-  end, { desc = 'nvim-regie : dernière réponse de Claude' })
+    vim.wo.winbar = ' Réponse de Claude (lecture seule) : y copie, q ou <leader>r ferme'
+  end
+  vim.keymap.set('n', '<leader>r', toggle_answer, { desc = 'nvim-regie : dernière réponse de Claude' })
+  vim.keymap.set('n', 'q', toggle_answer, { buffer = answer, desc = 'nvim-regie : fermer la réponse' })
 
   vim.cmd('startinsert')
 end

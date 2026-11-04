@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import pty from 'node-pty';
 import { attach } from 'neovim';
+import { cleanEnv } from './env.js';
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_PROMPT = 200 * 1024;
@@ -50,7 +51,7 @@ export class NvimBridge {
       cols,
       rows,
       cwd,
-      env: { ...process.env, REGIE_LUA: lua, REGIE_SEND_KEY: sendKey },
+      env: { ...cleanEnv(), REGIE_LUA: lua, REGIE_SEND_KEY: sendKey },
       useConpty: true,
       useConptyDll: true,
     });

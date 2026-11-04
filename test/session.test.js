@@ -83,3 +83,22 @@ test('transcript : items diffusés puis rejoués à un nouvel abonné', async ()
   assert.ok(late.some((x) => x.type === 'transcript' && x.items[0].text === 'salut'));
   m.killAll();
 });
+
+test("l'environnement du pty ne transmet pas les marqueurs d'une session Claude Code parente", async () => {
+  process.env.CLAUDE_CODE_CHILD_SESSION = '1';
+  process.env.CLAUDECODE = '1';
+  const script = "process.stdout.write('ENV[' + process.env.CLAUDE_CODE_CHILD_SESSION + '|' + process.env.CLAUDECODE + ']\\n')";
+  const m = new SessionManager({ command: process.execPath, args: () => ['-e', script] });
+  const got = [];
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.subscribe((msg) => got.push(msg));
+  try {
+    await until(() => got.some((x) => x.type === 'data' && x.data.includes('ENV[')));
+    const out = got.filter((x) => x.type === 'data').map((x) => x.data).join('');
+    assert.ok(out.includes('ENV[undefined|undefined]'), out);
+  } finally {
+    delete process.env.CLAUDE_CODE_CHILD_SESSION;
+    delete process.env.CLAUDECODE;
+    m.killAll();
+  }
+});

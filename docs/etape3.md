@@ -20,3 +20,7 @@ Le navigateur envoie des frappes à Neovim, qui peut lancer des commandes (`:!`)
 
 ## À vérifier à la main (non testable sous Node)
 Prompt multi-ligne accepté par le vrai `claude` via ConPTY (bracketed paste + `\r`), rendu de Neovim dans xterm.js avec la config utilisateur, `<leader>r`, rechargement de la page.
+
+## Correctifs après essai manuel
+- **Conversation vide** : un serveur lancé depuis un terminal héritant d'une session Claude Code (`CLAUDE_CODE_CHILD_SESSION`, `CLAUDECODE`…) donne un `claude` qui affiche « Transcript saving is off » et n'écrit aucun JSONL. `src/env.js` (`cleanEnv`) retire ces marqueurs de l'environnement des pty `claude` et `nvim` (test dans `test/session.test.js`). Bracketed paste + `\r` mesuré avec le vrai `claude` : accepté.
+- **Buffers Neovim** : le prompt est un buffer `nofile` (`:w` impossible, voulu) ; `regie://reponse` est en lecture seule. `<leader>r` bascule (ouvre/ferme), `q` ferme, barre d'indication dans chaque fenêtre.
