@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { loadConfig } from './config.js';
 import { SessionManager } from './session.js';
+import { findTranscript, defaultProjectsRoot } from './transcript.js';
 import {
   COOKIE_NAME, createToken, tokenMatches, parseCookies, originAllowed, hostAllowed,
 } from './security.js';
@@ -22,8 +23,39 @@ const VENDOR = {
 const PAGES = {
   '/': path.join(PUBLIC, 'index.html'),
   '/app.js': path.join(PUBLIC, 'app.js'),
+  '/render.js': path.join(PUBLIC, 'render.js'),
 };
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+// Dossiers servis par préfixe : un seul niveau de nom de fichier sûr par segment, extension imposée.
+const VENDOR_DIRS = [
+  { prefix: '/vendor/marked/', dir: path.join(ROOT, 'node_modules/marked/lib'), ext: /\.js$/ },
+  { prefix: '/vendor/dompurify/', dir: path.join(ROOT, 'node_modules/dompurify/dist'), ext: /\.mjs$/ },
+  { prefix: '/vendor/highlight/languages/', dir: path.join(ROOT, 'node_modules/highlight.js/es/languages'), ext: /\.js$/ },
+  { prefix: '/vendor/highlight/styles/', dir: path.join(ROOT, 'node_modules/highlight.js/styles'), ext: /\.css$/ },
+];
+const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function resolveVendorDir(pathname) {
+  for (const v of VENDOR_DIRS) {
+    if (!pathname.startsWith(v.prefix)) continue;
+    const segments = pathname.slice(v.prefix.length).split('/');
+    if (!segments.every((s) => SAFE_SEGMENT.test(s) && !s.includes('..'))) return null;
+    if (!v.ext.test(segments.at(-1))) return null;
+    const full = path.resolve(v.dir, ...segments);
+    return full.startsWith(v.dir + path.sep) ? full : null;
+  }
+  return null;
+}
+// highlight.js 11 ne livre son cœur qu'en CommonJS : on l'enveloppe en module ES à la volée
+// (aucun `require`, vérifié), sans étape de build.
+const HLJS_CORE = path.join(ROOT, 'node_modules/highlight.js/lib/core.js');
+const HLJS_SHIM_HEAD = 'const module = { exports: {} }; const exports = module.exports;\n';
+const HLJS_SHIM_TAIL = '\nexport default module.exports;\n';
+const TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+};
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
   'Cache-Control': 'no-store',
@@ -59,7 +91,13 @@ export function createApp({ config, token, sessions }) {
       });
     }
 
-    const file = PAGES[url.pathname] ?? VENDOR[url.pathname];
+    if (url.pathname === '/vendor/highlight/core.js') {
+      return fs.readFile(HLJS_CORE, 'utf8', (err, src) => {
+        if (err) return send(404, 'Not Found');
+        send(200, HLJS_SHIM_HEAD + src + HLJS_SHIM_TAIL, { 'Content-Type': TYPES['.js'] });
+      });
+    }
+    const file = PAGES[url.pathname] ?? VENDOR[url.pathname] ?? resolveVendorDir(url.pathname);
     if (!file) return send(404, 'Not Found');
     fs.readFile(file, (err, data) => {
       if (err) return send(404, 'Not Found');
@@ -147,6 +185,9 @@ async function main() {
   const sessions = new SessionManager({
     command: claude,
     args: (id) => ['--session-id', id],
+    transcript: {
+      resolve: (project, id) => findTranscript(defaultProjectsRoot(), project.path, id),
+    },
   });
   const app = createApp({ config, token, sessions });
   await app.listen();

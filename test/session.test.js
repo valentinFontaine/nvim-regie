@@ -60,3 +60,26 @@ test('une seule session par projet', () => {
   assert.equal(a, b);
   m.killAll();
 });
+
+test('transcript : items diffusés puis rejoués à un nouvel abonné', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'regie-s-')), 't.jsonl');
+  const m = new SessionManager({
+    ...echoer,
+    transcript: { resolve: () => (fs.existsSync(file) ? file : null), intervalMs: 20 },
+  });
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  fs.writeFileSync(file, JSON.stringify({ type: 'user', uuid: 'u', message: { content: 'salut' } }) + '\n');
+  await until(() => got.some((x) => x.type === 'transcript'));
+  const first = got.find((x) => x.type === 'transcript');
+  assert.equal(first.items[0].text, 'salut');
+
+  const late = [];
+  s.subscribe((msg) => late.push(msg));
+  assert.ok(late.some((x) => x.type === 'transcript' && x.items[0].text === 'salut'));
+  m.killAll();
+});

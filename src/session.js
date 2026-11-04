@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import pty from 'node-pty';
+import { TranscriptTail } from './transcript.js';
 
 const MAX_BUFFER = 200 * 1024;
+const MAX_ITEMS = 5000;
 const MAX_COLS = 500;
 const MAX_ROWS = 200;
 
@@ -37,7 +39,23 @@ export class Session {
       this.exited = true;
       this.exitCode = exitCode;
       this.#emit({ type: 'exit', code: exitCode });
+      // Laisse au suivi le temps de lire les dernières lignes écrites avant la sortie.
+      if (this.tail) setTimeout(() => this.tail.stop(), 2000).unref();
     });
+    this.items = [];
+    this.tail = null;
+    if (spec.transcript) {
+      this.tail = new TranscriptTail({
+        resolve: () => spec.transcript.resolve(project, this.id),
+        intervalMs: spec.transcript.intervalMs,
+        onItems: (batch) => {
+          this.items.push(...batch);
+          if (this.items.length > MAX_ITEMS) this.items.splice(0, this.items.length - MAX_ITEMS);
+          this.#emit({ type: 'transcript', items: batch });
+        },
+      });
+      this.tail.start();
+    }
   }
 
   #emit(msg) {
@@ -46,6 +64,7 @@ export class Session {
 
   subscribe(fn) {
     if (this.buffer) fn({ type: 'data', data: this.buffer });
+    if (this.items.length) fn({ type: 'transcript', items: this.items });
     if (this.exited) fn({ type: 'exit', code: this.exitCode });
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
@@ -63,6 +82,7 @@ export class Session {
   }
 
   kill() {
+    if (this.tail) this.tail.stop();
     if (!this.exited) {
       try { this.pty.kill(); } catch { /* déjà mort */ }
     }

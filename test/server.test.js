@@ -79,6 +79,17 @@ test('avec cookie : page, app, vendor, API', async () => {
   assert.equal((await get('/vendor/xterm/lib/xterm.js', { cookie: c })).status, 200);
   assert.equal((await get('/vendor/xterm/css/xterm.css', { cookie: c })).status, 200);
   assert.equal((await get('/vendor/addon-fit/lib/addon-fit.js', { cookie: c })).status, 200);
+  for (const p of [
+    '/vendor/marked/marked.esm.js',
+    '/vendor/dompurify/purify.es.mjs',
+    '/vendor/highlight/core.js',
+    '/vendor/highlight/languages/javascript.js',
+    '/vendor/highlight/styles/github-dark.min.css',
+    '/render.js',
+  ]) {
+    assert.equal((await get(p, { cookie: c })).status, 200, p);
+    assert.equal((await get(p)).status, 401, p);
+  }
   const api = await get('/api/projects', { cookie: c });
   assert.deepEqual(JSON.parse(api.body), [{ name: 'demo' }]);
 });
@@ -92,6 +103,11 @@ test('traversée de chemin et fichiers hors liste refusés', async () => {
     '/package.json',
     '/../package.json',
     '/src/server.js',
+    '/vendor/highlight/languages/../../package.json',
+    '/vendor/highlight/languages/%2e%2e/package.json',
+    '/vendor/highlight/languages/..%5c..%5cpackage.json',
+    '/vendor/highlight/languages/README.md',
+    '/vendor/marked/package.json',
   ];
   for (const p of paths) {
     const r = await get(p, { cookie: c });

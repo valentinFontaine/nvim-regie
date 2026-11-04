@@ -4,21 +4,43 @@
   <meta charset="utf-8">
   <title>nvim-regie</title>
   <link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
+  <link rel="stylesheet" href="/vendor/highlight/styles/github-dark.min.css">
   <style>
-    html, body { height: 100%; margin: 0; background: #1e1e1e; color: #ddd; font-family: system-ui, sans-serif; }
+    :root { --bg: #1e1e1e; --panel: #252526; --fg: #ddd; --muted: #8a8a8a; --accent: #4fa3ff; --err: #ff6b6b; }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; }
     body { display: flex; flex-direction: column; }
-    header { display: flex; gap: .5rem; padding: .5rem; align-items: center; }
-    #term { flex: 1; min-height: 0; padding: 0 .5rem .5rem; }
+    header { display: flex; gap: .5rem; padding: .5rem; align-items: center; border-bottom: 1px solid #333; }
     #status { margin-left: auto; opacity: .7; }
+    #conv { flex: 1; min-height: 0; overflow-y: auto; padding: 1rem max(1rem, calc((100% - 60rem) / 2)); }
+    .msg { margin: 0 0 1rem; }
+    .msg.user > .body { background: var(--panel); border-left: 3px solid var(--accent); padding: .5rem .75rem; border-radius: 4px; white-space: pre-wrap; }
+    .msg.assistant > .body > * { margin-top: 0; }
+    .md pre { background: #111; padding: .6rem .8rem; border-radius: 4px; overflow-x: auto; }
+    .md code { font-family: Consolas, monospace; font-size: .9em; }
+    .md :not(pre) > code { background: #333; padding: .1em .3em; border-radius: 3px; }
+    .md table { border-collapse: collapse; }
+    .md th, .md td { border: 1px solid #444; padding: .25rem .5rem; }
+    .md a { color: var(--accent); }
+    details.tool, details.think { margin: .35rem 0; border: 1px solid #333; border-radius: 4px; background: var(--panel); }
+    details > summary { cursor: pointer; padding: .25rem .5rem; color: var(--muted); font-size: .9em; }
+    details.tool > summary .name { color: var(--fg); font-weight: 600; margin-right: .5rem; }
+    details.tool.error > summary { color: var(--err); }
+    details pre { margin: 0; padding: .5rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font: .85em Consolas, monospace; border-top: 1px solid #333; }
+    details pre.result.error { color: var(--err); }
+    #drawer { display: none; height: 40vh; border-top: 2px solid #444; padding: .25rem .5rem; box-sizing: border-box; }
+    #drawer.open { display: block; }
+    #term { height: 100%; }
   </style>
 </head>
 <body>
   <header>
     <select id="project"></select>
     <button id="launch">Lancer</button>
+    <button id="toggle-term" aria-expanded="false">Terminal</button>
     <span id="status"></span>
   </header>
-  <div id="term"></div>
+  <div id="conv"></div>
+  <div id="drawer"><div id="term"></div></div>
   <script src="/vendor/xterm/lib/xterm.js"></script>
   <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
   <script type="module" src="/app.js"></script>
