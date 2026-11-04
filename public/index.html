@@ -27,6 +27,8 @@
     details.tool.error > summary { color: var(--err); }
     details pre { margin: 0; padding: .5rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font: .85em Consolas, monospace; border-top: 1px solid #333; }
     details pre.result.error { color: var(--err); }
+    #nvim { height: 30vh; border-top: 2px solid #4fa3ff; padding: .25rem .5rem; box-sizing: border-box; flex: none; }
+    #nvim-term { height: 100%; }
     #drawer { display: none; height: 40vh; border-top: 2px solid #444; padding: .25rem .5rem; box-sizing: border-box; }
     #drawer.open { display: block; }
     #term { height: 100%; }
@@ -40,6 +42,7 @@
     <span id="status"></span>
   </header>
   <div id="conv"></div>
+  <div id="nvim"><div id="nvim-term"></div></div>
   <div id="drawer"><div id="term"></div></div>
   <script src="/vendor/xterm/lib/xterm.js"></script>
   <script src="/vendor/addon-fit/lib/addon-fit.js"></script>

@@ -43,7 +43,16 @@ export function validateConfig(raw) {
     if (!st || !st.isDirectory()) throw new Error(`config.json : dossier introuvable : ${resolved}`);
     return { name: p.name, path: resolved };
   });
-  return { port, projects, nvimPath: typeof raw.nvimPath === 'string' ? raw.nvimPath : EXEMPLE.nvimPath };
+  const nvimPath = raw.nvimPath ?? EXEMPLE.nvimPath;
+  if (typeof nvimPath !== 'string' || !path.isAbsolute(nvimPath)) {
+    throw new Error('config.json : "nvimPath" doit être un chemin absolu');
+  }
+  if (!fs.existsSync(nvimPath)) throw new Error(`config.json : "nvimPath" introuvable : ${nvimPath}`);
+  const sendKey = raw.sendKey ?? '<leader><CR>';
+  if (typeof sendKey !== 'string' || sendKey.length < 1 || sendKey.length > 32) {
+    throw new Error('config.json : "sendKey" doit être une chaîne de 1 à 32 caractères (ex. "<leader><CR>")');
+  }
+  return { port, projects, nvimPath, sendKey };
 }
 
 export function loadConfig() {

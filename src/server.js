@@ -142,6 +142,10 @@ export function createApp({ config, token, sessions }) {
           if (session) session.write(msg.data);
         } else if (msg.type === 'resize') {
           if (session) session.resize(msg.cols, msg.rows);
+        } else if (msg.type === 'nvim-input') {
+          if (session) session.nvimWrite(msg.data);
+        } else if (msg.type === 'nvim-resize') {
+          if (session) session.nvimResize(msg.cols, msg.rows);
         } else {
           reply({ type: 'error', message: 'type inconnu' });
         }
@@ -185,6 +189,7 @@ async function main() {
   const sessions = new SessionManager({
     command: claude,
     args: (id) => ['--session-id', id],
+    nvim: { path: config.nvimPath, lua: path.join(ROOT, 'nvim', 'regie.lua'), sendKey: config.sendKey },
     transcript: {
       resolve: (project, id) => findTranscript(defaultProjectsRoot(), project.path, id),
     },

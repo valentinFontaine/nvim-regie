@@ -12,6 +12,11 @@ const fit = new window.FitAddon.FitAddon();
 term.loadAddon(fit);
 term.open(document.getElementById('term'));
 
+const nterm = new window.Terminal({ cursorBlink: true, fontSize: 14, scrollback: 0 });
+const nfit = new window.FitAddon.FitAddon();
+nterm.loadAddon(nfit);
+nterm.open(document.getElementById('nvim-term'));
+
 function setDrawer(open) {
   drawer.classList.toggle('open', open);
   toggle.setAttribute('aria-expanded', String(open));
@@ -92,17 +97,23 @@ function addItems(items) {
 function connect(project) {
   if (ws) ws.close();
   term.reset();
+  nterm.reset();
   conv.replaceChildren();
   msgEls = new Map();
   toolEls = new Map();
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onopen = () => {
     status.textContent = 'connecté';
+    nfit.fit();
     send({ type: 'start', project, cols: term.cols, rows: term.rows });
+    send({ type: 'nvim-resize', cols: nterm.cols, rows: nterm.rows });
+    nterm.focus();
   };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'data') term.write(msg.data);
+    else if (msg.type === 'nvim-data') nterm.write(msg.data);
+    else if (msg.type === 'nvim-exit') status.textContent = `nvim terminé (code ${msg.code})`;
     else if (msg.type === 'transcript') addItems(msg.items);
     else if (msg.type === 'exit') status.textContent = `claude terminé (code ${msg.code})`;
     else if (msg.type === 'error') status.textContent = `erreur : ${msg.message}`;
@@ -111,11 +122,13 @@ function connect(project) {
 }
 
 term.onData((data) => send({ type: 'input', data }));
+nterm.onData((data) => send({ type: 'nvim-input', data }));
+nterm.onResize(({ cols, rows }) => send({ type: 'nvim-resize', cols, rows }));
+new ResizeObserver(() => nfit.fit()).observe(document.getElementById('nvim'));
 term.onResize(({ cols, rows }) => send({ type: 'resize', cols, rows }));
 new ResizeObserver(() => { if (drawer.classList.contains('open')) fit.fit(); }).observe(document.getElementById('drawer'));
 launch.onclick = () => {
-  connect(select.value);
-  setDrawer(true); // le terminal reste utile pour la saisie tant que Neovim (étape 3) n'est pas là
+  connect(select.value); // la saisie se fait dans Neovim ; le tiroir sert aux commandes slash et permissions
 };
 
 const projects = await (await fetch('/api/projects')).json();
