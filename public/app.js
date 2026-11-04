@@ -4,6 +4,7 @@ const select = document.getElementById('project');
 const launch = document.getElementById('launch');
 const status = document.getElementById('status');
 const conv = document.getElementById('conv');
+const stateEl = document.getElementById('state');
 const drawer = document.getElementById('drawer');
 const toggle = document.getElementById('toggle-term');
 
@@ -94,6 +95,18 @@ function addItems(items) {
   if (stick) conv.scrollTop = conv.scrollHeight;
 }
 
+const STATE_LABELS = { running: 'en cours', needs_you: 'besoin de toi', done_unread: 'terminé', idle: 'au repos', error: 'erreur' };
+
+function showState(msg) {
+  stateEl.dataset.state = msg.state;
+  stateEl.textContent = STATE_LABELS[msg.state] ?? msg.state;
+  if (msg.activity) stateEl.textContent += ` · ${msg.activity}`;
+  document.title = msg.state === 'needs_you' ? '(!) nvim-regie' : 'nvim-regie';
+  if (msg.state === 'needs_you') setDrawer(true);
+  if (msg.state === 'done_unread' && document.hasFocus()) send({ type: 'read' });
+}
+window.addEventListener('focus', () => { if (stateEl.dataset.state === 'done_unread') send({ type: 'read' }); });
+
 function connect(project) {
   if (ws) ws.close();
   term.reset();
@@ -115,6 +128,8 @@ function connect(project) {
     else if (msg.type === 'nvim-data') nterm.write(msg.data);
     else if (msg.type === 'nvim-exit') status.textContent = `nvim terminé (code ${msg.code})`;
     else if (msg.type === 'transcript') addItems(msg.items);
+    else if (msg.type === 'transcript-reset') { conv.replaceChildren(); msgEls = new Map(); toolEls = new Map(); }
+    else if (msg.type === 'state') showState(msg);
     else if (msg.type === 'exit') status.textContent = `claude terminé (code ${msg.code})`;
     else if (msg.type === 'error') status.textContent = `erreur : ${msg.message}`;
   };

@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import pty from 'node-pty';
 import { TranscriptTail } from './transcript.js';
 import { NvimBridge, pasteSequence } from './nvim.js';
 import { cleanEnv } from './env.js';
+import { initialState, next as nextState, markRead as markReadState, ptyExited } from './state.js';
+
+const MAX_EXCERPT = 200;
+const sameFile = (a, b) => typeof a === 'string' && typeof b === 'string'
+  && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
 
 const MAX_BUFFER = 200 * 1024;
 const MAX_ITEMS = 5000;
@@ -32,7 +38,11 @@ export class Session {
     checkDim(cols, MAX_COLS, 'cols');
     checkDim(rows, MAX_ROWS, 'rows');
     this.project = project;
+    this.spec = spec;
     this.id = randomUUID();
+    this.snap = initialState();
+    this.since = Date.now();
+    this.excerpt = '';
     this.buffer = '';
     this.listeners = new Set();
     this.exited = false;
@@ -54,6 +64,7 @@ export class Session {
     this.pty.onExit(({ exitCode }) => {
       this.exited = true;
       this.exitCode = exitCode;
+      this.#setSnap(ptyExited(this.snap));
       this.#emit({ type: 'exit', code: exitCode });
       // Laisse au suivi le temps de lire les dernières lignes écrites avant la sortie.
       if (this.tail) setTimeout(() => this.tail.stop(), 2000).unref();
@@ -127,12 +138,54 @@ export class Session {
     for (const fn of this.listeners) fn(msg);
   }
 
+  #stateMsg() {
+    return { type: 'state', state: this.snap.state, activity: this.snap.activity, since: this.since, excerpt: this.excerpt };
+  }
+
+  #setSnap(snap, excerpt) {
+    if (snap === this.snap && excerpt === undefined) return;
+    if (snap.state !== this.snap.state) this.since = Date.now();
+    this.snap = snap;
+    if (excerpt !== undefined) this.excerpt = excerpt;
+    this.#emit(this.#stateMsg());
+  }
+
+  /** Applique un événement de hook (corps JSON déjà parsé, donc non fiable : tout est revalidé). */
+  applyHook(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    this.#followTranscript(payload.transcript_path);
+    let excerpt;
+    if (payload.hook_event_name === 'Stop') {
+      excerpt = typeof payload.last_assistant_message === 'string'
+        ? payload.last_assistant_message.trim().slice(0, MAX_EXCERPT) : '';
+    } else if (payload.hook_event_name === 'UserPromptSubmit') {
+      excerpt = '';
+    }
+    this.#setSnap(nextState(this.snap, payload), excerpt);
+  }
+
+  markRead() {
+    this.#setSnap(markReadState(this.snap));
+  }
+
+  /** /clear et /resume changent l'id de session : le suivi du JSONL doit changer de fichier. */
+  #followTranscript(given) {
+    if (typeof given !== 'string' || !this.tail || !this.spec?.transcript?.accept) return;
+    const file = this.spec.transcript.accept(given);
+    if (!file || sameFile(file, this.tail.file)) return;
+    this.tail.retarget(file);
+    this.items = [];
+    this.answer = '';
+    this.#emit({ type: 'transcript-reset' });
+  }
+
   subscribe(fn) {
     if (this.buffer) fn({ type: 'data', data: this.buffer });
     if (this.items.length) fn({ type: 'transcript', items: this.items });
     if (this.nvimBuffer) fn({ type: 'nvim-data', data: this.nvimBuffer });
     if (this.nvimExit !== null) fn({ type: 'nvim-exit', code: this.nvimExit });
     if (this.exited) fn({ type: 'exit', code: this.exitCode });
+    fn(this.#stateMsg());
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
@@ -181,6 +234,12 @@ export class SessionManager {
     const s = new Session(project, this.spec, cols, rows);
     this.sessions.set(project.name, s);
     return s;
+  }
+
+  /** Retrouve une session par son id (route des hooks). */
+  byId(id) {
+    for (const s of this.sessions.values()) if (s.id === id) return s;
+    return null;
   }
 
   killAll() {

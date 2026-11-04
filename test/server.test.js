@@ -8,9 +8,10 @@ import { SessionManager } from '../src/session.js';
 const PORT = 47655;
 const token = 'a'.repeat(64);
 let app;
+let sessions;
 
 before(async () => {
-  const sessions = new SessionManager({
+  sessions = new SessionManager({
     command: process.execPath,
     args: () => ['-e', "process.stdout.write('READY\\n');setInterval(()=>{},1000)"],
   });
@@ -146,5 +147,47 @@ test('WS : démarre un projet de la liste ; hors liste et non-JSON refusés', as
   }
   assert.ok(msgs.some((m) => m.type === 'error'), 'projet hors liste -> error');
   assert.ok(msgs.some((m) => m.type === 'data' && m.data.includes('READY')));
+  ws.close();
+});
+
+function post(path, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const data = typeof body === 'string' ? body : JSON.stringify(body);
+    const req = http.request(
+      { host: '127.0.0.1', port: PORT, path, method: 'POST', headers: { host: `127.0.0.1:${PORT}`, 'content-type': 'application/json', ...headers } },
+      (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); },
+    );
+    req.on('error', (e) => (e.code === 'ECONNRESET' || e.code === 'EPIPE' ? resolve(413) : reject(e)));
+    req.end(data);
+  });
+}
+
+test("hooks : jeton dans l'URL, sans cookie, applique l'événement à la bonne session", async () => {
+  const s = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24);
+  const url = (t, id) => `/hooks/${t}/${id}`;
+  assert.equal(await post(url(token, s.id), { hook_event_name: 'UserPromptSubmit' }), 204);
+  assert.equal(s.snap.state, 'running');
+  assert.equal(await post(url('b'.repeat(64), s.id), { hook_event_name: 'Stop' }), 401);
+  assert.equal(s.snap.state, 'running');
+  assert.equal(await post(url(token, '00000000-0000-4000-8000-000000000000'), {}), 404);
+  assert.equal(await post(url(token, 'pas-un-uuid'), {}), 404);
+  assert.equal(await post(url(token, s.id), 'pas du json'), 400);
+  assert.equal(await post(url(token, s.id), { hook_event_name: 'Stop', pad: 'x'.repeat(70_000) }), 413);
+  assert.equal(await post(url(token, s.id), { hook_event_name: 'Stop' }, { host: 'evil.test' }), 403);
+  assert.equal(s.snap.state, 'running');
+  assert.equal((await get(url(token, s.id))).status, 405);
+});
+
+test('WS : message read fait passer done_unread à idle', async () => {
+  const s = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24);
+  s.applyHook({ hook_event_name: 'Stop' });
+  assert.equal(s.snap.state, 'done_unread');
+  const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { cookie: await cookie(), origin: `http://127.0.0.1:${PORT}` } });
+  await new Promise((r) => ws.on('open', r));
+  ws.send(JSON.stringify({ type: 'start', project: 'demo', cols: 80, rows: 24 }));
+  ws.send(JSON.stringify({ type: 'read' }));
+  const t = Date.now();
+  while (s.snap.state !== 'idle' && Date.now() - t < 5000) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(s.snap.state, 'idle');
   ws.close();
 });

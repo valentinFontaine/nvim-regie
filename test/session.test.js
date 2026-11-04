@@ -102,3 +102,75 @@ test("l'environnement du pty ne transmet pas les marqueurs d'une session Claude 
     m.killAll();
   }
 });
+
+test('applyHook : état, activité, rejeu à un nouvel abonné, extrait au Stop', async () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  assert.equal(s.snap.state, 'idle');
+  s.applyHook({ hook_event_name: 'UserPromptSubmit', prompt: 'x' });
+  s.applyHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  const states = got.filter((x) => x.type === 'state');
+  assert.deepEqual(states.map((x) => x.state), ['idle', 'running', 'running']); // le premier est le rejeu de l'état initial à l'abonnement
+  assert.equal(states.at(-1).activity, 'Bash ls');
+  s.applyHook({ hook_event_name: 'Stop', last_assistant_message: 'Terminé : '.padEnd(500, 'x') });
+  const last = got.filter((x) => x.type === 'state').at(-1);
+  assert.equal(last.state, 'done_unread');
+  assert.ok(last.excerpt.length <= 200 && last.excerpt.startsWith('Terminé'));
+  const late = [];
+  s.subscribe((msg) => late.push(msg));
+  assert.equal(late.find((x) => x.type === 'state').state, 'done_unread');
+  s.markRead();
+  assert.equal(got.filter((x) => x.type === 'state').at(-1).state, 'idle');
+  m.killAll();
+});
+
+test('applyHook : charge invalide ignorée sans exception', () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  assert.doesNotThrow(() => { s.applyHook(null); s.applyHook('x'); s.applyHook({}); });
+  assert.equal(s.snap.state, 'idle');
+  m.killAll();
+});
+
+test('mort du pty → état error diffusé', async () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  await until(() => got.some((x) => x.data?.includes('READY')));
+  s.write('q');
+  await until(() => got.some((x) => x.type === 'state' && x.state === 'error'));
+  m.killAll();
+});
+
+test('transcript_path différent (/clear, /resume) : le suivi bascule sur le nouveau fichier', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'regie-r-'));
+  const a = path.join(dir, 'a.jsonl');
+  const b = path.join(dir, 'b.jsonl');
+  const line = (t) => JSON.stringify({ type: 'user', uuid: t, message: { content: t } }) + '\n';
+  fs.writeFileSync(a, line('ancien'));
+  fs.writeFileSync(b, line('nouveau'));
+  const m = new SessionManager({
+    ...echoer,
+    transcript: {
+      resolve: () => a,
+      accept: (p) => (p === b ? b : null),
+      intervalMs: 20,
+    },
+  });
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  await until(() => got.some((x) => x.type === 'transcript' && x.items[0].text === 'ancien'));
+  s.applyHook({ hook_event_name: 'UserPromptSubmit', transcript_path: 'C:\hors\racine.jsonl' });
+  s.applyHook({ hook_event_name: 'UserPromptSubmit', transcript_path: b });
+  await until(() => got.some((x) => x.type === 'transcript' && x.items[0].text === 'nouveau'));
+  assert.ok(got.some((x) => x.type === 'transcript-reset'));
+  assert.deepEqual(s.items.map((i) => i.text), ['nouveau']);
+  m.killAll();
+});

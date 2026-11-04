@@ -35,6 +35,20 @@ export function findTranscript(root, projectPath, sessionId) {
   return null;
 }
 
+/**
+ * Valide un chemin de transcript reçu d'un hook (donc non fiable) : absolu, `.jsonl`, directement
+ * dans un sous-dossier de `root`. Retourne le chemin normalisé ou null.
+ */
+export function acceptTranscript(root, given) {
+  if (typeof given !== 'string' || given.length > 1024 || !path.isAbsolute(given)) return null;
+  const full = path.resolve(given);
+  const rel = path.relative(path.resolve(root), full);
+  const parts = rel.split(path.sep);
+  if (rel.startsWith('..') || path.isAbsolute(rel) || parts.length !== 2) return null;
+  if (!/^[A-Za-z0-9._-]+$/.test(parts[0]) || !UUID_RE.test(parts[1].replace(/\.jsonl$/i, ''))) return null;
+  return /\.jsonl$/i.test(full) ? full : null;
+}
+
 export function parseLine(line) {
   if (typeof line !== 'string' || !line.trim()) return null;
   try {
@@ -133,6 +147,14 @@ export class TranscriptTail {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /** Suit désormais `file` depuis son début (/clear et /resume changent d'id de session). */
+  retarget(file) {
+    this.resolve = () => file;
+    this.file = file;
+    this.offset = 0;
+    this.rest = '';
   }
 
   async #poll() {

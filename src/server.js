@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { loadConfig } from './config.js';
 import { SessionManager } from './session.js';
-import { findTranscript, defaultProjectsRoot } from './transcript.js';
+import { findTranscript, defaultProjectsRoot, acceptTranscript } from './transcript.js';
 import {
   COOKIE_NAME, createToken, tokenMatches, parseCookies, originAllowed, hostAllowed,
 } from './security.js';
@@ -32,7 +32,29 @@ const VENDOR_DIRS = [
   { prefix: '/vendor/highlight/languages/', dir: path.join(ROOT, 'node_modules/highlight.js/es/languages'), ext: /\.js$/ },
   { prefix: '/vendor/highlight/styles/', dir: path.join(ROOT, 'node_modules/highlight.js/styles'), ext: /\.css$/ },
 ];
-const SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const HOOK_ROUTE = /^\/hooks\/([0-9a-f]{64})\/([^/]+)$/i;
+const MAX_HOOK_BODY = 64 * 1024;
+const HOOK_EVENTS = [
+  { name: 'UserPromptSubmit' },
+  { name: 'PreToolUse' },
+  { name: 'PostToolUse' },
+  { name: 'Notification', matcher: 'permission_prompt' },
+  { name: 'Stop' },
+  { name: 'SessionEnd' },
+];
+
+/** Contenu de `--settings` : un hook HTTP par événement, jeton et id de session dans l'URL. Jamais écrit sur disque. */
+export function hooksSettings(port, token, id) {
+  const url = `http://127.0.0.1:${port}/hooks/${token}/${id}`;
+  const hooks = {};
+  for (const { name, matcher } of HOOK_EVENTS) {
+    hooks[name] = [{ ...(matcher ? { matcher } : {}), hooks: [{ type: 'http', url, timeout: 5 }] }];
+  }
+  return JSON.stringify({ hooks });
+}
+
+const SAFE_SEGMENT =/^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 function resolveVendorDir(pathname) {
   for (const v of VENDOR_DIRS) {
@@ -72,6 +94,9 @@ export function createApp({ config, token, sessions }) {
     if (!hostAllowed(req.headers.host, port)) return send(403, 'Forbidden');
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
 
+    const hook = HOOK_ROUTE.exec(url.pathname);
+    if (hook) return handleHook(req, send, hook[1], hook[2]);
+
     if (req.method !== 'GET') return send(405, 'Method Not Allowed');
 
     if (url.pathname === '/' && url.searchParams.has('token')) {
@@ -104,6 +129,35 @@ export function createApp({ config, token, sessions }) {
       send(200, data, { 'Content-Type': TYPES[path.extname(file)] ?? 'application/octet-stream' });
     });
   });
+
+  // Hooks de Claude Code : pas de cookie (c'est `claude` qui appelle), le jeton est dans l'URL.
+  function handleHook(req, send, given, id) {
+    if (!tokenMatches(given, token)) return send(401, 'Unauthorized');
+    if (req.method !== 'POST') return send(405, 'Method Not Allowed');
+    const session = UUID_RE.test(id) ? sessions.byId(id) : null;
+    if (!session) return send(404, 'Not Found');
+    let size = 0;
+    const chunks = [];
+    let aborted = false;
+    req.on('data', (c) => {
+      if (aborted) return;
+      size += c.length;
+      if (size > MAX_HOOK_BODY) {
+        aborted = true;
+        send(413, 'Payload Too Large', { Connection: 'close' });
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      if (aborted) return;
+      let payload;
+      try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400, 'Bad Request'); }
+      try { session.applyHook(payload); } catch { /* un hook mal formé ne doit jamais faire tomber le serveur */ }
+      send(204, '');
+    });
+  }
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 
@@ -138,6 +192,8 @@ export function createApp({ config, token, sessions }) {
           if (unsub) unsub();
           session = sessions.start(project, msg.cols, msg.rows);
           unsub = session.subscribe(reply);
+        } else if (msg.type === 'read') {
+          if (session) session.markRead();
         } else if (msg.type === 'input') {
           if (session) session.write(msg.data);
         } else if (msg.type === 'resize') {
@@ -188,10 +244,12 @@ async function main() {
   const token = createToken();
   const sessions = new SessionManager({
     command: claude,
-    args: (id) => ['--session-id', id],
+    args: (id) => ['--session-id', id, '--settings', hooksSettings(config.port, token, id)],
     nvim: { path: config.nvimPath, lua: path.join(ROOT, 'nvim', 'regie.lua'), sendKey: config.sendKey },
     transcript: {
       resolve: (project, id) => findTranscript(defaultProjectsRoot(), project.path, id),
+      // Un transcript_path reçu d'un hook n'est suivi que s'il est un .jsonl sous la racine des projets.
+      accept: (p) => acceptTranscript(defaultProjectsRoot(), p),
     },
   });
   const app = createApp({ config, token, sessions });

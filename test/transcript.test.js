@@ -157,3 +157,16 @@ test('tolérance sur de vrais transcripts locaux (sauté si absents)', { skip: !
   }
   assert.ok(files >= 0);
 });
+
+test('acceptTranscript : seulement <racine>/<dossier>/<uuid>.jsonl', async () => {
+  const { acceptTranscript } = await import('../src/transcript.js');
+  const path = await import('node:path');
+  const root = path.resolve('C:/r/projects');
+  const id = '11111111-2222-4333-8444-555555555555';
+  assert.equal(acceptTranscript(root, path.join(root, 'proj-x', `${id}.jsonl`)), path.join(root, 'proj-x', `${id}.jsonl`));
+  for (const bad of [
+    path.join(root, '..', 'autre', `${id}.jsonl`), path.join(root, `${id}.jsonl`),
+    path.join(root, 'a', 'b', `${id}.jsonl`), path.join(root, 'proj-x', `${id}.txt`),
+    path.join(root, 'proj-x', 'notuuid.jsonl'), 'relatif/x.jsonl', null, 42,
+  ]) assert.equal(acceptTranscript(root, bad), null, String(bad));
+});
