@@ -37,7 +37,7 @@
   sans attendre le prochain prompt.
 - **Esc en plein tour** : **aucun hook** (ni `Stop`). Le badge restait « en cours ». Mais le JSONL reçoit une
   ligne user « [Request interrupted by user] » → `interrupted()` repasse running/needs_you à `idle`.
-- Esc dans la page : tant que le focus est dans Neovim, Esc va à Neovim, pas à claude (voir en-suspens).
+- Esc dans la page : le focus Neovim intercepte Esc ; le bouton « Interrompre » (header, actif seulement en « en cours ») envoie Échap au pty de claude sans ouvrir le tiroir.
 
 ## À vérifier à la main
 

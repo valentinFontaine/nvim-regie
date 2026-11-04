@@ -10,6 +10,7 @@
     html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; }
     body { display: flex; flex-direction: column; }
     header { display: flex; gap: .5rem; padding: .5rem; align-items: center; border-bottom: 1px solid #333; }
+    #interrupt:not(:disabled) { background: #b45309; color: #fff; }
     #state { margin-left: auto; padding: 0 .5rem; border-radius: .6rem; background: #333; }
     #state[data-state="running"] { background: #1f4d7a; }
     #state[data-state="needs_you"] { background: #b45309; font-weight: bold; }
@@ -44,6 +45,7 @@
     <select id="project"></select>
     <button id="launch">Lancer</button>
     <button id="toggle-term" aria-expanded="false">Terminal</button>
+    <button id="interrupt" disabled title="Envoie Échap à claude (interrompt le tour en cours)">Interrompre</button>
     <span id="state" title="état de la session"></span>
     <span id="status"></span>
   </header>

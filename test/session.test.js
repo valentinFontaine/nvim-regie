@@ -229,3 +229,17 @@ test('interruption : un état done_unread ou error n\'est pas écrasé', () => {
   assert.equal(s.snap.state, 'done_unread');
   m.killAll();
 });
+
+test('interrupt : envoie Échap au pty de claude, sans effet une fois terminé', async () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  await until(() => got.some((x) => x.data?.includes('READY')));
+  s.interrupt();
+  await until(() => got.some((x) => x.type === 'data' && x.data.includes('ECHO:\x1b')));
+  s.write('q');
+  await until(() => got.some((x) => x.type === 'exit'));
+  assert.doesNotThrow(() => s.interrupt());
+  m.killAll();
+});

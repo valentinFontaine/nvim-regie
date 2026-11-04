@@ -209,6 +209,11 @@ export class Session {
     if (!this.exited) this.pty.write(data);
   }
 
+  /** Échap vers claude : interrompt le tour en cours, sans passer par le tiroir terminal. */
+  interrupt() {
+    if (!this.exited) this.pty.write('');
+  }
+
   resize(cols, rows) {
     checkDim(cols, MAX_COLS, 'cols');
     checkDim(rows, MAX_ROWS, 'rows');

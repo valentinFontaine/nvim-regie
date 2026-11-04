@@ -194,6 +194,8 @@ export function createApp({ config, token, sessions }) {
           unsub = session.subscribe(reply);
         } else if (msg.type === 'read') {
           if (session) session.markRead();
+        } else if (msg.type === 'interrupt') {
+          if (session) session.interrupt();
         } else if (msg.type === 'input') {
           if (session) session.write(msg.data);
         } else if (msg.type === 'resize') {

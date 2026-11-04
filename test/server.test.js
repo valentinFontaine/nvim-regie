@@ -191,3 +191,24 @@ test('WS : message read fait passer done_unread à idle', async () => {
   assert.equal(s.snap.state, 'idle');
   ws.close();
 });
+
+test('WS : message interrupt accepté ; aucun effet sans session', async () => {
+  const s = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24);
+  let writes = 0;
+  const orig = s.interrupt.bind(s);
+  s.interrupt = () => { writes++; orig(); };
+  const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { cookie: await cookie(), origin: `http://127.0.0.1:${PORT}` } });
+  const msgs = [];
+  ws.on('message', (d) => msgs.push(JSON.parse(String(d))));
+  await new Promise((r) => ws.on('open', r));
+  ws.send(JSON.stringify({ type: 'interrupt' }));
+  await new Promise((r) => setTimeout(r, 150));
+  assert.equal(writes, 0);
+  assert.equal(msgs.some((m) => m.type === 'error'), false);
+  ws.send(JSON.stringify({ type: 'start', project: 'demo', cols: 80, rows: 24 }));
+  ws.send(JSON.stringify({ type: 'interrupt' }));
+  const t = Date.now();
+  while (writes === 0 && Date.now() - t < 3000) await new Promise((r) => setTimeout(r, 30));
+  assert.equal(writes, 1);
+  ws.close();
+});

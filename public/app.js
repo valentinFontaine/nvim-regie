@@ -5,6 +5,8 @@ const launch = document.getElementById('launch');
 const status = document.getElementById('status');
 const conv = document.getElementById('conv');
 const stateEl = document.getElementById('state');
+const interruptBtn = document.getElementById('interrupt');
+interruptBtn.onclick = () => send({ type: 'interrupt' });
 const drawer = document.getElementById('drawer');
 const toggle = document.getElementById('toggle-term');
 
@@ -101,6 +103,7 @@ function showState(msg) {
   stateEl.dataset.state = msg.state;
   stateEl.textContent = STATE_LABELS[msg.state] ?? msg.state;
   if (msg.activity) stateEl.textContent += ` · ${msg.activity}`;
+  interruptBtn.disabled = msg.state !== 'running';
   document.title = msg.state === 'needs_you' ? '(!) nvim-regie' : 'nvim-regie';
   if (msg.state === 'needs_you') setDrawer(true);
   if (msg.state === 'done_unread' && document.hasFocus()) send({ type: 'read' });
