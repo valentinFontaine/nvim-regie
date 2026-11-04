@@ -39,7 +39,7 @@
   ligne user « [Request interrupted by user] » → `interrupted()` repasse running/needs_you à `idle`.
 - Esc dans la page : le focus Neovim intercepte Esc ; le bouton « Interrompre » (header, actif seulement en « en cours ») envoie Échap au pty de claude sans ouvrir le tiroir.
 
-## À vérifier à la main
+## Validé à la main (2026-11-04)
 
 - Esc dans le tiroir terminal : le badge doit repasser à « au repos ».
 - /clear : l'affichage doit se vider tout de suite.

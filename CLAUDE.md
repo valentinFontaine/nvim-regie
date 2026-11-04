@@ -80,7 +80,7 @@ Une étape à la fois, en mode Plan pour chacune, testée avant de passer à la 
 1. Serveur Node qui lance `claude` dans un pty et affiche le terminal brut dans le navigateur (xterm.js).
 2. Documentation du format JSONL, puis affichage de la conversation rendue à partir du fichier.
 3. Neovim dans le navigateur et pont RPC pour envoyer le prompt. ✅ Fait et validé à la main (voir `docs/etape3.md`).
-4. Hooks HTTP et machine à états. ✅ Code et tests faits (voir `docs/etape4.md`), validation à la main en attente.
+4. Hooks HTTP et machine à états. ✅ Fait et validé à la main (voir `docs/etape4.md`).
 5. Tableau de bord multi-sessions.
 6. Le reste selon les décisions ci-dessous.
 
