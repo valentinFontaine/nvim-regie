@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>nvim-regie</title>
+  <link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
+  <style>
+    html, body { height: 100%; margin: 0; background: #1e1e1e; color: #ddd; font-family: system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; }
+    header { display: flex; gap: .5rem; padding: .5rem; align-items: center; }
+    #term { flex: 1; min-height: 0; padding: 0 .5rem .5rem; }
+    #status { margin-left: auto; opacity: .7; }
+  </style>
+</head>
+<body>
+  <header>
+    <select id="project"></select>
+    <button id="launch">Lancer</button>
+    <span id="status"></span>
+  </header>
+  <div id="term"></div>
+  <script src="/vendor/xterm/lib/xterm.js"></script>
+  <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
