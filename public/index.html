@@ -9,7 +9,28 @@
     :root { --bg: #1e1e1e; --panel: #252526; --fg: #ddd; --muted: #8a8a8a; --accent: #4fa3ff; --err: #ff6b6b; }
     html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, sans-serif; }
     body { display: flex; flex-direction: column; }
+    [hidden] { display: none !important; }
     header { display: flex; gap: .5rem; padding: .5rem; align-items: center; border-bottom: 1px solid #333; }
+    header a { color: var(--accent); text-decoration: none; }
+    #sess { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    #dash { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; padding: .75rem; overflow-y: auto; align-items: start; }
+    .col > h2 { font-size: .95rem; margin: 0 0 .5rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .col > h2 .n { margin-left: .4rem; color: var(--fg); }
+    .col.needs_you > h2 { color: #f59e0b; }
+    .card { background: var(--panel); border: 1px solid #333; border-left: 4px solid #555; border-radius: 4px; padding: .5rem .65rem; margin-bottom: .5rem; cursor: pointer; }
+    .card[data-state="running"] { border-left-color: #4fa3ff; }
+    .card[data-state="needs_you"] { border-left-color: #f59e0b; }
+    .card[data-state="error"] { border-left-color: var(--err); }
+    .card[data-state="done_unread"] { border-left-color: #22c55e; }
+    .card.selected { outline: 2px solid var(--accent); }
+    .card .head { display: flex; gap: .5rem; align-items: baseline; }
+    .card .proj { font-weight: 600; }
+    .card .branch { color: var(--muted); font-size: .85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card .dur { margin-left: auto; color: var(--muted); font-size: .85em; white-space: nowrap; }
+    .card .label { font-size: .85em; color: var(--muted); }
+    .card .act { font: .85em Consolas, monospace; margin-top: .25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card .exc { font-size: .85em; margin-top: .25rem; color: #bbb; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    @media (max-width: 900px) { #dash { grid-template-columns: 1fr; } }
     #interrupt:not(:disabled) { background: #b45309; color: #fff; }
     #state { margin-left: auto; padding: 0 .5rem; border-radius: .6rem; background: #333; }
     #state[data-state="running"] { background: #1f4d7a; }
@@ -33,6 +54,15 @@
     details.tool.error > summary { color: var(--err); }
     details pre { margin: 0; padding: .5rem; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font: .85em Consolas, monospace; border-top: 1px solid #333; }
     details pre.result.error { color: var(--err); }
+    #picker { flex: 1; min-height: 0; overflow-y: auto; padding: 1rem max(1rem, calc((100% - 40rem) / 2)); }
+    #picker[hidden] { display: none; }
+    #picker h2 { margin: 0 0 .75rem; font-size: 1.1rem; }
+    #picker .opt { display: flex; gap: .75rem; align-items: baseline; width: 100%; text-align: left; background: var(--panel); border: 1px solid #333; border-radius: 4px; padding: .5rem .65rem; margin-bottom: .4rem; color: var(--fg); cursor: pointer; font: inherit; }
+    #picker .opt:hover, #picker .opt:focus { outline: 2px solid var(--accent); }
+    #picker .opt .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #picker .opt .ago { color: var(--muted); font-size: .85em; white-space: nowrap; }
+    #picker .opt.new { border-left: 4px solid var(--accent); font-weight: 600; }
+    #picker .empty { color: var(--muted); margin: .5rem 0; }
     #nvim { height: 30vh; border-top: 2px solid #4fa3ff; padding: .25rem .5rem; box-sizing: border-box; flex: none; }
     #nvim-term { height: 100%; }
     #drawer { display: none; height: 40vh; border-top: 2px solid #444; padding: .25rem .5rem; box-sizing: border-box; }
@@ -42,16 +72,22 @@
 </head>
 <body>
   <header>
-    <select id="project"></select>
-    <button id="launch">Lancer</button>
-    <button id="toggle-term" aria-expanded="false">Terminal</button>
-    <button id="interrupt" disabled title="Envoie Échap à claude (interrompt le tour en cours)">Interrompre</button>
+    <a id="back" href="#/" hidden>← Tableau de bord</a>
+    <strong id="proj-name"></strong>
+    <button id="resume-btn" hidden title="Reprendre une session passée de ce projet">Reprendre…</button>
+    <button id="toggle-term" aria-expanded="false" hidden>Terminal</button>
+    <button id="interrupt" disabled hidden title="Envoie Échap à claude (interrompt le tour en cours)">Interrompre</button>
     <span id="state" title="état de la session"></span>
     <span id="status"></span>
+    <button id="notif" hidden title="Notification système et bip quand une session attend ta réponse">Activer les notifications</button>
   </header>
-  <div id="conv"></div>
-  <div id="nvim"><div id="nvim-term"></div></div>
-  <div id="drawer"><div id="term"></div></div>
+  <main id="dash"></main>
+  <div id="sess" hidden>
+    <div id="picker" hidden></div>
+    <div id="conv"></div>
+    <div id="nvim"><div id="nvim-term"></div></div>
+    <div id="drawer"><div id="term"></div></div>
+  </div>
   <script src="/vendor/xterm/lib/xterm.js"></script>
   <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
   <script type="module" src="/app.js"></script>

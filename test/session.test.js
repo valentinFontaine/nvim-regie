@@ -243,3 +243,112 @@ test('interrupt : envoie Échap au pty de claude, sans effet une fois terminé',
   assert.doesNotThrow(() => s.interrupt());
   m.killAll();
 });
+
+test('subscribeAll : liste à l\'abonnement (projets sans session = stopped), puis à chaque changement', async () => {
+  const m = new SessionManager(echoer);
+  const pa = { name: 'a', path: process.cwd() };
+  const pb = { name: 'b', path: process.cwd() };
+  const lists = [];
+  const unsub = m.subscribeAll((msg) => lists.push(msg), [pa, pb]);
+  assert.equal(lists[0].type, 'sessions');
+  assert.deepEqual(lists[0].sessions.map((s) => [s.project, s.state]), [['a', 'stopped'], ['b', 'stopped']]);
+  const s = m.start(pa, 80, 24);
+  const last = () => lists.at(-1).sessions;
+  assert.equal(last().find((x) => x.project === 'a').state, 'idle');
+  assert.equal(last().find((x) => x.project === 'b').state, 'stopped');
+  s.applyHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } });
+  const a = last().find((x) => x.project === 'a');
+  assert.equal(a.state, 'running');
+  assert.equal(a.activity, 'Bash ls');
+  assert.deepEqual(Object.keys(a).sort(), ['activity', 'branch', 'excerpt', 'project', 'since', 'state']);
+  const n = lists.length;
+  unsub();
+  s.applyHook({ hook_event_name: 'Stop', last_assistant_message: 'fini' });
+  assert.equal(lists.length, n);
+  m.killAll();
+});
+
+test('subscribeAll : la mort du pty est diffusée (error)', async () => {
+  const m = new SessionManager(echoer);
+  const p = { name: 'p', path: process.cwd() };
+  const lists = [];
+  m.subscribeAll((msg) => lists.push(msg), [p]);
+  const s = m.start(p, 80, 24);
+  s.subscribe(() => {});
+  await wait(500);
+  s.write('q');
+  await until(() => lists.at(-1).sessions[0].state === 'error');
+  m.killAll();
+});
+
+test('summaries : branche lue dans la config (null sans dépôt)', () => {
+  const m = new SessionManager(echoer);
+  const sums = m.summaries([{ name: 'x', path: process.cwd() }, { name: 'y', path: 'C:\inexistant-regie' }]);
+  assert.equal(typeof sums[0].branch === 'string' || sums[0].branch === null, true);
+  assert.equal(sums[1].branch, null);
+});
+
+const RID = '99999999-9999-4999-8999-999999999999';
+
+test('reprise : args reçoit l\'id de reprise, claudeId = uuid repris, id (hooks) reste distinct', () => {
+  const calls = [];
+  const resolved = [];
+  const m = new SessionManager({
+    command: process.execPath,
+    args: (id, resume) => { calls.push([id, resume]); return ['-e', SCRIPT]; },
+    transcript: { resolve: (p, id) => { resolved.push(id); return null; }, intervalMs: 20 },
+  });
+  const p = { name: 'p', path: process.cwd() };
+  const s = m.start(p, 80, 24, { resume: RID });
+  assert.equal(s.claudeId, RID);
+  assert.notEqual(s.id, RID);
+  assert.deepEqual(calls[0], [s.id, RID]);
+  assert.equal(m.byId(s.id), s);
+  const n = m.start({ name: 'q', path: process.cwd() }, 80, 24);
+  assert.equal(n.claudeId, n.id);
+  assert.equal(calls[1][1], undefined);
+  return wait(150).then(() => {
+    assert.ok(resolved.includes(RID), 'le suivi du JSONL cherche le fichier de la session reprise');
+    assert.ok(resolved.includes(n.id));
+    m.killAll();
+  });
+});
+
+test('reprise : l\'id de reprise est refusé s\'il n\'est pas un UUID', () => {
+  const m = new SessionManager(echoer);
+  assert.throws(() => m.start({ name: 'p', path: process.cwd() }, 80, 24, { resume: '../x' }));
+  assert.throws(() => m.start({ name: 'p', path: process.cwd() }, 80, 24, { resume: 42 }));
+  assert.equal(m.sessions.size, 0);
+});
+
+test('restart : tue la session vivante du projet et en démarre une autre (reprise)', async () => {
+  const m = new SessionManager(echoer);
+  const p = { name: 'p', path: process.cwd() };
+  const a = m.start(p, 80, 24);
+  const b = m.restart(p, 80, 24, { resume: RID });
+  assert.notEqual(a, b);
+  assert.equal(m.sessions.get('p'), b);
+  assert.equal(b.claudeId, RID);
+  assert.equal(m.byId(a.id), null);
+  await until(() => a.exited);
+  assert.equal(m.sessions.get('p'), b, 'la mort de l\'ancienne ne touche pas la nouvelle');
+  m.killAll();
+});
+
+test('historique rejoué (reprise) : une ancienne interruption ne repasse pas un tour en cours à idle', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'regie-h-')), 't.jsonl');
+  const user = (text) => JSON.stringify({ type: 'user', uuid: text, message: { role: 'user', content: [{ type: 'text', text }] } }) + '\n';
+  fs.writeFileSync(file, user('vieille question') + user('[Request interrupted by user]'));
+  const m = new SessionManager({ ...echoer, transcript: { resolve: () => file, intervalMs: 20 } });
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+  await until(() => s.items.length === 2);
+  await wait(150);
+  assert.equal(s.snap.state, 'running', 'l\'historique n\'est pas une interruption en direct');
+  fs.appendFileSync(file, user('[Request interrupted by user]'));
+  await until(() => s.snap.state === 'idle');
+  m.killAll();
+});

@@ -81,7 +81,7 @@ Une étape à la fois, en mode Plan pour chacune, testée avant de passer à la 
 2. Documentation du format JSONL, puis affichage de la conversation rendue à partir du fichier.
 3. Neovim dans le navigateur et pont RPC pour envoyer le prompt. ✅ Fait et validé à la main (voir `docs/etape3.md`).
 4. Hooks HTTP et machine à états. ✅ Fait et validé à la main (voir `docs/etape4.md`).
-5. Tableau de bord multi-sessions.
+5. Tableau de bord multi-sessions et reprise de session. ✅ Fait et validé à la main (voir `docs/etape5.md`, `docs/etape5b.md`).
 6. Le reste selon les décisions ci-dessous.
 
 ## Projets similaires et ce qu'on en retient
@@ -108,7 +108,7 @@ Notre différence : aucun de ces projets ne fait de Neovim la zone de saisie, av
 
 ### Fonctionnement
 - **D5. Association pty ↔ fichier JSONL.** ✅ Décidé : `claude --session-id <uuid>` (vérifié sur 2.1.318). Le serveur génère l'UUID et suit `~/.claude/projects/<dossier-encodé>/<uuid>.jsonl`. À vérifier à la main : encodage du dossier sous Windows.
-- **D6. Cycle de vie.** ✅ Décidé : fermer le navigateur ne tue rien (pty et `claude` vivent côté serveur). Au redémarrage du serveur, les pty meurent ; les sessions réapparaissent « au repos » (UUID conservés dans un JSON sous `%LOCALAPPDATA%\nvim-regie\`, hors dépôt) et se relancent par `claude --resume <uuid>`. Rattacher un `claude` externe : impossible.
+- **D6. Cycle de vie.** ✅ Décidé : fermer le navigateur ne tue rien (pty et `claude` vivent côté serveur). Au redémarrage du serveur, les pty meurent ; les projets réapparaissent « non lancé ». Pas de fichier d'UUID à nous : le serveur liste les JSONL que claude écrit (`src/sessions-list.js`, titre = dernier `ai-title`) et le bouton « Reprendre… » relance `claude --resume <uuid>` (même fichier complété, historique rejoué dans l'interface ; voir `docs/etape5b.md`). Rattacher un `claude` externe : impossible.
 - **D7. Création des sessions.** ✅ Décidé : depuis l'interface uniquement (dossier choisi dans une liste de projets), sans détection des sessions externes ni worktree automatique en v1.
 - **D8. Installation des hooks.** ✅ Décidé : injection par `claude --settings <JSON>` (option vérifiée) à chaque lancement ; `~/.claude/settings.json` n'est jamais modifié. À vérifier à l'étape 4 : fusion avec les hooks existants, pas remplacement.
 

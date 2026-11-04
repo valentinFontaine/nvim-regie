@@ -19,6 +19,7 @@ before(async () => {
     config: { port: PORT, projects: [{ name: 'demo', path: process.cwd() }] },
     token,
     sessions,
+    pastSessions: (project) => (project.name === 'demo' ? [{ id: '55555555-5555-4555-8555-555555555555', title: 'Titre passé', mtime: 1, size: 2 }] : []),
   });
   await app.listen();
 });
@@ -87,6 +88,7 @@ test('avec cookie : page, app, vendor, API', async () => {
     '/vendor/highlight/languages/javascript.js',
     '/vendor/highlight/styles/github-dark.min.css',
     '/render.js',
+    '/dashboard.js',
   ]) {
     assert.equal((await get(p, { cookie: c })).status, 200, p);
     assert.equal((await get(p)).status, 401, p);
@@ -210,5 +212,82 @@ test('WS : message interrupt accepté ; aucun effet sans session', async () => {
   const t = Date.now();
   while (writes === 0 && Date.now() - t < 3000) await new Promise((r) => setTimeout(r, 30));
   assert.equal(writes, 1);
+  ws.close();
+});
+
+async function openCollect() {
+  const msgs = [];
+  const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { cookie: await cookie(), origin: `http://127.0.0.1:${PORT}` } });
+  ws.on('message', (d) => msgs.push(JSON.parse(String(d))));
+  await new Promise((r) => ws.on('open', r));
+  return { ws, msgs };
+}
+async function waitFor(fn, ms = 5000) {
+  const t = Date.now();
+  while (Date.now() - t < ms && !fn()) await new Promise((r) => setTimeout(r, 30));
+  assert.ok(fn(), 'délai dépassé');
+}
+
+test('WS : le flux global des sessions arrive dès la connexion (sans start) et suit les hooks', async () => {
+  const { ws, msgs } = await openCollect();
+  await waitFor(() => msgs.some((m) => m.type === 'sessions'));
+  const first = msgs.find((m) => m.type === 'sessions');
+  assert.equal(first.sessions.length, 1);
+  assert.equal(first.sessions[0].project, 'demo');
+  assert.ok(!msgs.some((m) => m.type === 'data' || m.type === 'state'), 'rien de la session sans start');
+  const s = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24);
+  s.applyHook({ hook_event_name: 'Notification', notification_type: 'permission_prompt' });
+  await waitFor(() => msgs.some((m) => m.type === 'sessions' && m.sessions[0].state === 'needs_you'));
+  s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+  ws.close();
+});
+
+test('WS : detach arrête les messages de la session et neutralise read', async () => {
+  const s = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24);
+  s.applyHook({ hook_event_name: 'Stop' });
+  assert.equal(s.snap.state, 'done_unread');
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'start', project: 'demo', cols: 80, rows: 24 }));
+  await waitFor(() => msgs.some((m) => m.type === 'state'));
+  ws.send(JSON.stringify({ type: 'detach' }));
+  ws.send(JSON.stringify({ type: 'read' }));
+  ws.send(JSON.stringify({ type: 'interrupt' }));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(s.snap.state, 'done_unread');
+  const n = msgs.filter((m) => m.type === 'state').length;
+  s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+  await waitFor(() => msgs.some((m) => m.type === 'sessions' && m.sessions[0].state === 'running'));
+  assert.equal(msgs.filter((m) => m.type === 'state').length, n, 'plus de message de session après detach');
+  ws.close();
+});
+
+const PAST_ID = '55555555-5555-4555-8555-555555555555';
+
+test('WS : list-sessions renvoie les sessions passées du projet (hors liste : erreur)', async () => {
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'list-sessions', project: '../x' }));
+  ws.send(JSON.stringify({ type: 'list-sessions', project: 'demo' }));
+  await waitFor(() => msgs.some((m) => m.type === 'past-sessions'));
+  const r = msgs.find((m) => m.type === 'past-sessions');
+  assert.equal(r.project, 'demo');
+  assert.deepEqual(r.sessions, [{ id: PAST_ID, title: 'Titre passé', mtime: 1, size: 2 }]);
+  assert.ok(msgs.some((m) => m.type === 'error'));
+  ws.close();
+});
+
+test('WS : resume valide l\'id contre le listing du projet, remplace la session vivante et s\'y rattache', async () => {
+  const old = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24);
+  const { ws, msgs } = await openCollect();
+  for (const bad of ['../../x', '00000000-0000-4000-8000-000000000000', 42, undefined]) {
+    ws.send(JSON.stringify({ type: 'resume', project: 'demo', id: bad, cols: 80, rows: 24 }));
+  }
+  ws.send(JSON.stringify({ type: 'resume', project: 'inconnu', id: PAST_ID, cols: 80, rows: 24 }));
+  await waitFor(() => msgs.filter((m) => m.type === 'error').length >= 5);
+  assert.equal(sessions.sessions.get('demo'), old, 'rien n\'est remplacé par une demande invalide');
+  ws.send(JSON.stringify({ type: 'resume', project: 'demo', id: PAST_ID, cols: 80, rows: 24 }));
+  await waitFor(() => sessions.sessions.get('demo') !== old);
+  const fresh = sessions.sessions.get('demo');
+  assert.equal(fresh.claudeId, PAST_ID);
+  await waitFor(() => msgs.some((m) => m.type === 'data' && m.data.includes('READY')));
   ws.close();
 });

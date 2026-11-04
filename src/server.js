@@ -7,6 +7,7 @@ import { WebSocketServer } from 'ws';
 import { loadConfig } from './config.js';
 import { SessionManager } from './session.js';
 import { findTranscript, defaultProjectsRoot, acceptTranscript } from './transcript.js';
+import { listPastSessions } from './sessions-list.js';
 import {
   COOKIE_NAME, createToken, tokenMatches, parseCookies, originAllowed, hostAllowed,
 } from './security.js';
@@ -24,6 +25,7 @@ const PAGES = {
   '/': path.join(PUBLIC, 'index.html'),
   '/app.js': path.join(PUBLIC, 'app.js'),
   '/render.js': path.join(PUBLIC, 'render.js'),
+  '/dashboard.js': path.join(PUBLIC, 'dashboard.js'),
 };
 // Dossiers servis par préfixe : un seul niveau de nom de fichier sûr par segment, extension imposée.
 const VENDOR_DIRS = [
@@ -84,7 +86,7 @@ const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:*",
 };
 
-export function createApp({ config, token, sessions }) {
+export function createApp({ config, token, sessions, pastSessions = (project) => listPastSessions(defaultProjectsRoot(), project.path) }) {
   const { port } = config;
   const server = http.createServer((req, res) => {
     const send = (status, body, extra = {}) => {
@@ -180,6 +182,8 @@ export function createApp({ config, token, sessions }) {
     let session = null;
     let unsub = null;
     const reply = (msg) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); };
+    // Flux global (tableau de bord) : dès la connexion, sans start.
+    const unsubAll = sessions.subscribeAll(reply, config.projects);
 
     ws.on('message', (raw) => {
       let msg;
@@ -192,6 +196,24 @@ export function createApp({ config, token, sessions }) {
           if (unsub) unsub();
           session = sessions.start(project, msg.cols, msg.rows);
           unsub = session.subscribe(reply);
+        } else if (msg.type === 'list-sessions') {
+          const project = config.projects.find((p) => p.name === msg.project);
+          if (!project) return reply({ type: 'error', message: 'projet inconnu' });
+          reply({ type: 'past-sessions', project: project.name, sessions: pastSessions(project) });
+        } else if (msg.type === 'resume') {
+          // Reprise : l'id doit figurer dans le listing du projet (donc être un fichier de ce projet) ; la session vivante est remplacée.
+          const project = config.projects.find((p) => p.name === msg.project);
+          if (!project) return reply({ type: 'error', message: 'projet inconnu' });
+          if (typeof msg.id !== 'string' || !pastSessions(project).some((x) => x.id === msg.id.toLowerCase())) {
+            return reply({ type: 'error', message: 'session inconnue' });
+          }
+          if (unsub) unsub();
+          session = sessions.restart(project, msg.cols, msg.rows, { resume: msg.id.toLowerCase() });
+          unsub = session.subscribe(reply);
+        } else if (msg.type === 'detach') {
+          if (unsub) unsub();
+          unsub = null;
+          session = null;
         } else if (msg.type === 'read') {
           if (session) session.markRead();
         } else if (msg.type === 'interrupt') {
@@ -211,7 +233,7 @@ export function createApp({ config, token, sessions }) {
         reply({ type: 'error', message: e.message });
       }
     });
-    ws.on('close', () => { if (unsub) unsub(); });
+    ws.on('close', () => { if (unsub) unsub(); unsubAll(); });
   }
 
   return {
@@ -246,7 +268,7 @@ async function main() {
   const token = createToken();
   const sessions = new SessionManager({
     command: claude,
-    args: (id) => ['--session-id', id, '--settings', hooksSettings(config.port, token, id)],
+    args: (id, resume) => [...(resume ? ['--resume', resume] : ['--session-id', id]), '--settings', hooksSettings(config.port, token, id)],
     nvim: { path: config.nvimPath, lua: path.join(ROOT, 'nvim', 'regie.lua'), sendKey: config.sendKey },
     transcript: {
       resolve: (project, id) => findTranscript(defaultProjectsRoot(), project.path, id),
