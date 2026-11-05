@@ -1,8 +1,10 @@
 import { renderMarkdown, toolTarget } from '/render.js';
+import { ansiSegments } from '/ansi.js';
 import { COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo } from '/dashboard.js';
 
 const status = document.getElementById('status');
 const conv = document.getElementById('conv');
+const statusLineEl = document.getElementById('statusline');
 const stateEl = document.getElementById('state');
 const interruptBtn = document.getElementById('interrupt');
 interruptBtn.onclick = () => send({ type: 'interrupt' });
@@ -40,6 +42,7 @@ let cards = [];           // dernier flux global reçu
 let seeded = false;       // la première liste reçue ne déclenche aucune notification
 let current = null;       // projet affiché dans la vue session (null = tableau de bord)
 let selected = null;      // carte sélectionnée au clavier
+let pendingEl = null;     // prompt envoyé, pas encore lu dans le transcript
 
 function send(msg) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -101,10 +104,36 @@ function addItem(item) {
   }
 }
 
+const isUserPrompt = (it) => it.kind === 'text' && it.role === 'user'
+  && !String(it.text).startsWith('[Request interrupted by user');
+
 function addItems(items) {
   const stick = conv.scrollHeight - conv.scrollTop - conv.clientHeight < 80;
+  // La ligne utilisateur du transcript remplace l'affichage provisoire (même règle que session.js).
+  if (pendingEl && items.some(isUserPrompt)) { pendingEl.remove(); pendingEl = null; }
   for (const it of items) addItem(it);
   if (stick) conv.scrollTop = conv.scrollHeight;
+}
+
+/** Barre de statut de claude (sortie de la statusLine de l'utilisateur, couleurs ANSI comprises). */
+function showStatusLine(text) {
+  const nodes = ansiSegments(text).map((s) => {
+    const span = el('span', null, s.text);
+    if (s.color) span.style.color = s.color;
+    if (s.bold) span.style.fontWeight = 'bold';
+    return span;
+  });
+  statusLineEl.replaceChildren(...nodes);
+  statusLineEl.hidden = !text.trim();
+}
+
+/** Prompt envoyé depuis Neovim, affiché avant que claude ne l'écrive dans le JSONL. */
+function showPending(text) {
+  if (pendingEl) pendingEl.remove();
+  pendingEl = el('div', 'msg user pending');
+  pendingEl.append(el('div', 'body', text));
+  conv.append(pendingEl);
+  conv.scrollTop = conv.scrollHeight;
 }
 
 const STATE_LABELS = {
@@ -239,6 +268,8 @@ function resetSessionView() {
   nterm.reset();
   conv.replaceChildren();
   msgEls = new Map();
+  pendingEl = null;
+  showStatusLine('');
   toolEls = new Map();
   nfit.fit();
 }
@@ -401,7 +432,9 @@ function connect() {
     else if (msg.type === 'nvim-data') nterm.write(msg.data);
     else if (msg.type === 'nvim-exit') status.textContent = `nvim terminé (code ${msg.code})`;
     else if (msg.type === 'transcript') addItems(msg.items);
-    else if (msg.type === 'transcript-reset') { conv.replaceChildren(); msgEls = new Map(); toolEls = new Map(); }
+    else if (msg.type === 'pending') showPending(msg.text);
+    else if (msg.type === 'status') showStatusLine(msg.text);
+    else if (msg.type === 'transcript-reset') { conv.replaceChildren(); msgEls = new Map(); toolEls = new Map(); pendingEl = null; }
     else if (msg.type === 'state') showState(msg);
     else if (msg.type === 'exit') status.textContent = `claude terminé (code ${msg.code})`;
     else if (msg.type === 'error') status.textContent = `erreur : ${msg.message}`;

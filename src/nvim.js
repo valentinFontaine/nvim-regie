@@ -107,8 +107,9 @@ export class NvimBridge {
   kill() {
     this.killed = true;
     try { this.sock?.end(); } catch { /* déjà fermé */ }
-    if (!this.exited) {
-      try { this.pty.kill(); } catch { /* déjà mort */ }
+    if (!this.released) {
+      this.released = true;
+      try { this.pty.kill(); } catch { /* déjà libéré */ }
     }
   }
 }

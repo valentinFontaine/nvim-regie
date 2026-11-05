@@ -5,6 +5,7 @@ import path from 'node:path';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_RESULT = 20_000;
 const MAX_INPUT_STRING = 4_000;
+const FAST_MS = 50;
 
 export function defaultProjectsRoot() {
   return path.join(os.homedir(), '.claude', 'projects');
@@ -135,6 +136,8 @@ export class TranscriptTail {
     this.offset = 0;
     this.rest = '';
     this.timer = null;
+    this.fast = null;
+    this.fastUntil = 0;
     this.busy = false;
   }
 
@@ -147,6 +150,28 @@ export class TranscriptTail {
   stop() {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.#stopFast();
+  }
+
+  /**
+   * Relecture immédiate, puis toutes les FAST_MS pendant `durationMs` : à l'envoi d'un prompt,
+   * claude écrit la ligne utilisateur dans le JSONL en quelques dizaines de ms.
+   */
+  kick(durationMs = 3000) {
+    if (!this.timer) return;
+    this.fastUntil = Date.now() + durationMs;
+    this.#poll();
+    if (this.fast) return;
+    this.fast = setInterval(() => {
+      if (Date.now() > this.fastUntil) this.#stopFast();
+      else this.#poll();
+    }, FAST_MS);
+    this.fast.unref?.();
+  }
+
+  #stopFast() {
+    if (this.fast) clearInterval(this.fast);
+    this.fast = null;
   }
 
   /** Suit désormais `file` depuis son début (/clear et /resume changent d'id de session). */

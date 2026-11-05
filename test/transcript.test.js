@@ -170,3 +170,20 @@ test('acceptTranscript : seulement <racine>/<dossier>/<uuid>.jsonl', async () =>
     path.join(root, 'proj-x', 'notuuid.jsonl'), 'relatif/x.jsonl', null, 42,
   ]) assert.equal(acceptTranscript(root, bad), null, String(bad));
 });
+
+test('TranscriptTail.kick : relecture immédiate puis rapide, sans attendre l\'intervalle normal', async () => {
+  const dir = tmpdir();
+  const file = path.join(dir, 'k.jsonl');
+  fs.writeFileSync(file, '');
+  const batches = [];
+  const tail = new TranscriptTail({ resolve: () => file, onItems: (b) => batches.push(...b), intervalMs: 60_000 });
+  tail.start();
+  tail.kick(2000);
+  await wait(50);
+  fs.appendFileSync(file, JSON.stringify({ type: 'user', uuid: 'u1', message: { content: 'vite' } }) + '\n');
+  const t = Date.now();
+  while (!batches.length && Date.now() - t < 1000) await wait(10);
+  tail.stop();
+  assert.equal(batches[0]?.text, 'vite', 'ligne lue en mode rapide');
+  assert.ok(Date.now() - t < 500, 'lue en moins de 500 ms');
+});

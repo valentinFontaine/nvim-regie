@@ -32,7 +32,11 @@ Champs communs : `uuid`, `parentUuid`, `timestamp` (ISO), `sessionId`, `cwd`, `g
 - `isMeta: true` (injections système, ~18 % des lignes `user`) : écarté.
 - `isSidechain: true` (sous-agents) : écarté en v1.
 - `isCompactSummary`, `isVisibleInTranscriptOnly`, `origin.kind` (`"human"`…) existent ; non exploités.
-- Les blocs `thinking` ont souvent un texte vide : écartés si vides.
+- Les blocs `thinking` ont souvent un texte vide : écartés si vides. Cause (vérifiée dans le binaire
+  2.1.318) : le réglage `showThinkingSummaries` vaut `false` par défaut (affichage « omitted »). La régie
+  l'injecte à `true` via `--settings` pour ses sessions, ce qui demande des résumés de réflexion à l'API
+  (équivalent CLI : `--thinking-display summarized`). Une session reprise ne récupère pas le texte des
+  tours écrits avant.
 - `message.stop_reason` : `tool_use` ou `end_turn` sur les lignes assistant.
 
 ## Exemples (synthétiques)

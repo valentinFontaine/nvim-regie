@@ -26,6 +26,7 @@ const PAGES = {
   '/app.js': path.join(PUBLIC, 'app.js'),
   '/render.js': path.join(PUBLIC, 'render.js'),
   '/dashboard.js': path.join(PUBLIC, 'dashboard.js'),
+  '/ansi.js': path.join(PUBLIC, 'ansi.js'),
 };
 // Dossiers servis par préfixe : un seul niveau de nom de fichier sûr par segment, extension imposée.
 const VENDOR_DIRS = [
@@ -35,7 +36,8 @@ const VENDOR_DIRS = [
   { prefix: '/vendor/highlight/styles/', dir: path.join(ROOT, 'node_modules/highlight.js/styles'), ext: /\.css$/ },
 ];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const HOOK_ROUTE = /^\/hooks\/([0-9a-f]{64})\/([^/]+)$/i;
+const HOOK_ROUTE = /^\/(hooks|status)\/([0-9a-f]{64})\/([^/]+)$/i;
+const RELAY = path.join(ROOT, 'scripts', 'statusline-relay.mjs');
 const MAX_HOOK_BODY = 64 * 1024;
 const HOOK_EVENTS = [
   { name: 'UserPromptSubmit' },
@@ -46,14 +48,21 @@ const HOOK_EVENTS = [
   { name: 'SessionEnd' },
 ];
 
-/** Contenu de `--settings` : un hook HTTP par événement, jeton et id de session dans l'URL. Jamais écrit sur disque. */
+/**
+ * Contenu de `--settings` : un hook HTTP par événement, jeton et id de session dans l'URL, et une
+ * statusLine relais qui exécute celle de l'utilisateur puis poste son texte au serveur. Jamais écrit sur disque.
+ * La commande n'est faite que de valeurs du serveur (chemins, port, jeton hexadécimal, UUID).
+ */
 export function hooksSettings(port, token, id) {
   const url = `http://127.0.0.1:${port}/hooks/${token}/${id}`;
   const hooks = {};
   for (const { name, matcher } of HOOK_EVENTS) {
     hooks[name] = [{ ...(matcher ? { matcher } : {}), hooks: [{ type: 'http', url, timeout: 5 }] }];
   }
-  return JSON.stringify({ hooks });
+  const q = (p) => `"${p.replaceAll('\\', '/')}"`;
+  const statusLine = { type: 'command', command: `${q(process.execPath)} ${q(RELAY)} ${port} ${token} ${id}` };
+  // showThinkingSummaries (défaut false sur 2.1.318) : sans lui, les blocs thinking du JSONL sont vides.
+  return JSON.stringify({ hooks, statusLine, showThinkingSummaries: true });
 }
 
 const SAFE_SEGMENT =/^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -97,7 +106,7 @@ export function createApp({ config, token, sessions, pastSessions = (project) =>
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
 
     const hook = HOOK_ROUTE.exec(url.pathname);
-    if (hook) return handleHook(req, send, hook[1], hook[2]);
+    if (hook) return handleHook(req, send, hook[2], hook[3], hook[1].toLowerCase() === 'status' ? applyStatus : applyHook);
 
     if (req.method !== 'GET') return send(405, 'Method Not Allowed');
 
@@ -133,7 +142,15 @@ export function createApp({ config, token, sessions, pastSessions = (project) =>
   });
 
   // Hooks de Claude Code : pas de cookie (c'est `claude` qui appelle), le jeton est dans l'URL.
-  function handleHook(req, send, given, id) {
+  const applyHook = (session, payload) => { session.applyHook(payload); return true; };
+  const applyStatus = (session, payload) => {
+    if (typeof payload?.text !== 'string') return false;
+    session.setStatus(payload.text);
+    return true;
+  };
+
+  // Même porte pour les hooks et la statusLine relais : jeton dans l'URL, corps JSON borné.
+  function handleHook(req, send, given, id, apply) {
     if (!tokenMatches(given, token)) return send(401, 'Unauthorized');
     if (req.method !== 'POST') return send(405, 'Method Not Allowed');
     const session = UUID_RE.test(id) ? sessions.byId(id) : null;
@@ -156,8 +173,9 @@ export function createApp({ config, token, sessions, pastSessions = (project) =>
       if (aborted) return;
       let payload;
       try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return send(400, 'Bad Request'); }
-      try { session.applyHook(payload); } catch { /* un hook mal formé ne doit jamais faire tomber le serveur */ }
-      send(204, '');
+      let ok = true;
+      try { ok = apply(session, payload); } catch { /* un hook mal formé ne doit jamais faire tomber le serveur */ }
+      send(ok ? 204 : 400, '');
     });
   }
 

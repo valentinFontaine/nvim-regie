@@ -352,3 +352,27 @@ test('historique rejoué (reprise) : une ancienne interruption ne repasse pas un
   await until(() => s.snap.state === 'idle');
   m.killAll();
 });
+
+test('sendPrompt : prompt affiché tout de suite (pending), rejoué, effacé quand le transcript le porte', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'regie-p-')), 't.jsonl');
+  const m = new SessionManager({ ...echoer, transcript: { resolve: () => (fs.existsSync(file) ? file : null), intervalMs: 60_000 } });
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  s.sendPrompt('Bonjour régie');
+  assert.deepEqual(got.find((x) => x.type === 'pending'), { type: 'pending', text: 'Bonjour régie' });
+  const late = [];
+  s.subscribe((msg) => late.push(msg));
+  assert.ok(late.some((x) => x.type === 'pending' && x.text === 'Bonjour régie'), 'rejoué à un nouvel abonné');
+  // L'intervalle normal est d'une minute : seule la relecture déclenchée par l'envoi peut lire la ligne.
+  fs.writeFileSync(file, JSON.stringify({ type: 'user', uuid: 'u', message: { content: 'Bonjour régie' } }) + '\n');
+  await until(() => got.some((x) => x.type === 'transcript'), 2000);
+  assert.equal(s.pending, null);
+  const after = [];
+  s.subscribe((msg) => after.push(msg));
+  assert.ok(!after.some((x) => x.type === 'pending'), 'plus rejoué une fois confirmé');
+  m.killAll();
+});

@@ -8,6 +8,7 @@ import { readBranch } from './git.js';
 import { initialState, next as nextState, markRead as markReadState, ptyExited, interrupted, isInterruptItem } from './state.js';
 
 const MAX_EXCERPT = 200;
+const MAX_STATUS = 2000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const sameFile = (a, b) => typeof a === 'string' && typeof b === 'string'
   && path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
@@ -76,6 +77,8 @@ export class Session {
       if (this.tail) setTimeout(() => this.tail.stop(), 2000).unref();
     });
     this.items = [];
+    this.pending = null;
+    this.status = '';
     this.tail = null;
     this.answer = '';
     this.backlogSeen = false;
@@ -91,6 +94,7 @@ export class Session {
         onItems: (batch) => {
           this.items.push(...batch);
           if (this.items.length > MAX_ITEMS) this.items.splice(0, this.items.length - MAX_ITEMS);
+          this.#confirmPending(batch);
           this.#emit({ type: 'transcript', items: batch });
           // Le premier lot lu d'un fichier est l'historique (reprise) : ses interruptions sont anciennes.
           if (this.backlogSeen) this.noteTranscriptItems(batch);
@@ -110,7 +114,7 @@ export class Session {
         cols,
         rows,
         cwd: this.project.path,
-        onSend: (text) => this.#sendPrompt(text),
+        onSend: (text) => this.sendPrompt(text),
         onData: (data) => {
           this.nvimBuffer += data;
           if (this.nvimBuffer.length > MAX_BUFFER) this.nvimBuffer = this.nvimBuffer.slice(-MAX_BUFFER);
@@ -131,10 +135,22 @@ export class Session {
     );
   }
 
-  #sendPrompt(text) {
-    if (this.exited) return;
+  /**
+   * Colle le prompt dans claude et l'affiche aussitôt (« pending ») sans attendre le JSONL,
+   * qui est relu en mode rapide ; la ligne utilisateur du transcript remplace l'affichage provisoire.
+   */
+  sendPrompt(text) {
+    if (this.exited || typeof text !== 'string') return;
     this.pty.write(pasteSequence(text));
     setTimeout(() => { if (!this.exited) this.pty.write('\r'); }, ENTER_DELAY_MS).unref();
+    this.pending = text;
+    this.#emit({ type: 'pending', text });
+    if (this.tail) this.tail.kick();
+  }
+
+  #confirmPending(batch) {
+    if (this.pending === null) return;
+    if (batch.some((it) => it.kind === 'text' && it.role === 'user' && !isInterruptItem(it))) this.pending = null;
   }
 
   #pushAnswer(force = false) {
@@ -186,8 +202,16 @@ export class Session {
 
   #resetConversation() {
     this.items = [];
+    this.pending = null;
     this.answer = '';
     this.#emit({ type: 'transcript-reset' });
+  }
+
+  /** Texte de la statusLine (relais) : affiché tel quel, séquences ANSI comprises, borné. */
+  setStatus(text) {
+    if (typeof text !== 'string') return;
+    this.status = text.slice(0, MAX_STATUS);
+    this.#emit({ type: 'status', text: this.status });
   }
 
   markRead() {
@@ -207,6 +231,8 @@ export class Session {
   subscribe(fn) {
     if (this.buffer) fn({ type: 'data', data: this.buffer });
     if (this.items.length) fn({ type: 'transcript', items: this.items });
+    if (this.pending !== null) fn({ type: 'pending', text: this.pending });
+    if (this.status) fn({ type: 'status', text: this.status });
     if (this.nvimBuffer) fn({ type: 'nvim-data', data: this.nvimBuffer });
     if (this.nvimExit !== null) fn({ type: 'nvim-exit', code: this.nvimExit });
     if (this.exited) fn({ type: 'exit', code: this.exitCode });
@@ -245,8 +271,10 @@ export class Session {
   kill() {
     if (this.bridge) this.bridge.kill();
     if (this.tail) this.tail.stop();
-    if (!this.exited) {
-      try { this.pty.kill(); } catch { /* déjà mort */ }
+    // Même après la sortie : avec useConptyDll, node-pty ne ferme la pseudo-console qu'au kill().
+    if (!this.released) {
+      this.released = true;
+      try { this.pty.kill(); } catch { /* déjà libéré */ }
     }
   }
 }

@@ -42,6 +42,7 @@
     .msg { margin: 0 0 1rem; }
     .msg.user > .body { background: var(--panel); border-left: 3px solid var(--accent); padding: .5rem .75rem; border-radius: 4px; white-space: pre-wrap; }
     .msg.assistant > .body > * { margin-top: 0; }
+    .msg.user.pending > .body { opacity: .65; border-left-style: dashed; }
     .md pre { background: #111; padding: .6rem .8rem; border-radius: 4px; overflow-x: auto; }
     .md code { font-family: Consolas, monospace; font-size: .9em; }
     .md :not(pre) > code { background: #333; padding: .1em .3em; border-radius: 3px; }
@@ -63,6 +64,8 @@
     #picker .opt .ago { color: var(--muted); font-size: .85em; white-space: nowrap; }
     #picker .opt.new { border-left: 4px solid var(--accent); font-weight: 600; }
     #picker .empty { color: var(--muted); margin: .5rem 0; }
+    #statusline { flex: none; padding: .2rem .75rem; font: .85em Consolas, monospace; white-space: pre; overflow: hidden; text-overflow: ellipsis; background: var(--panel); border-top: 1px solid #333; }
+    #statusline[hidden] { display: none; }
     #nvim { height: 30vh; border-top: 2px solid #4fa3ff; padding: .25rem .5rem; box-sizing: border-box; flex: none; }
     #nvim-term { height: 100%; }
     #drawer { display: none; height: 40vh; border-top: 2px solid #444; padding: .25rem .5rem; box-sizing: border-box; }
@@ -85,6 +88,7 @@
   <div id="sess" hidden>
     <div id="picker" hidden></div>
     <div id="conv"></div>
+    <div id="statusline" title="Barre de statut de claude (ta statusLine)" hidden></div>
     <div id="nvim"><div id="nvim-term"></div></div>
     <div id="drawer"><div id="term"></div></div>
   </div>
