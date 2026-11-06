@@ -8,6 +8,14 @@ import {
   encodeProjectDir, findTranscript, parseLine, toItems, TranscriptTail,
 } from '../src/transcript.js';
 
+test('toItems : fin de tour (system/turn_duration) → item turn', () => {
+  const e = { type: 'system', subtype: 'turn_duration', durationMs: 67824, timestamp: '2026-11-05T08:34:23.726Z', uuid: 'u-1', isMeta: false };
+  assert.deepEqual(toItems(e), [{ msgId: 'u-1', role: 'system', ts: '2026-11-05T08:34:23.726Z', kind: 'turn', durationMs: 67824 }]);
+  assert.deepEqual(toItems({ ...e, durationMs: 'x' }), [], 'durée invalide ignorée');
+  assert.deepEqual(toItems({ ...e, isSidechain: true }), [], 'sous-agent ignoré');
+  assert.deepEqual(toItems({ ...e, subtype: 'stop_hook_summary' }), [], 'autres system ignorés');
+});
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'fixtures', 'session.jsonl');
 const UUID = '123e4567-e89b-42d3-a456-426614174000';
@@ -51,6 +59,7 @@ test('fixture : séquence d\'items attendue', () => {
     'assistant:text',
     'user:tool_result',
     'user:text',            // bloc text
+    'system:turn',          // fin de tour (turn_duration)
   ]);
   assert.equal(it[0].text, 'Bonjour **toi**');
   assert.equal(it[0].msgId, 'u1');

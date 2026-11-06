@@ -2,7 +2,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   columnOf, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, COLUMNS, formatAgo,
+  formatTurnDuration, turnLine,
 } from '../public/dashboard.js';
+
+test('formatTurnDuration : secondes, minutes et secondes, heures', () => {
+  assert.equal(formatTurnDuration(11_400), '11 s');
+  assert.equal(formatTurnDuration(67_824), '1 min 8 s');
+  assert.equal(formatTurnDuration(3_720_000), '1 h 02 min');
+  assert.equal(formatTurnDuration(-5), '0 s');
+  assert.equal(formatTurnDuration('x'), '');
+});
+
+test('turnLine : ligne d\'activité en cours ou de fin de tour', () => {
+  assert.equal(turnLine({ running: true, elapsedMs: 12_000, activity: 'Bash : npm test' }), '✻ En cours… 12 s · Bash : npm test');
+  assert.equal(turnLine({ running: true, elapsedMs: 3_000, activity: '' }), '✻ En cours… 3 s');
+  const end = new Date(2026, 10, 5, 9, 4);
+  assert.equal(turnLine({ running: false, elapsedMs: 67_824, endedAt: end }), '✻ 1 min 8 s · fini à 09:04');
+});
 
 const card = (project, state, since = 1000) => ({ project, state, since });
 

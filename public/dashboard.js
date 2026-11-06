@@ -38,6 +38,26 @@ export function formatDuration(ms) {
   return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`;
 }
 
+/** Durée d'un tour, plus fine que formatDuration : « 11 s », « 1 min 8 s », « 1 h 02 min ». */
+export function formatTurnDuration(ms) {
+  if (typeof ms !== 'number' || Number.isNaN(ms)) return '';
+  const s = Math.max(0, Math.round(ms / 1000)); // arrondi, comme le terminal (67,8 s → « 1m 8s »)
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ${s % 60} s`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+}
+
+/** Ligne sous la réponse : « ✻ En cours… 12 s · outil » pendant le tour, « ✻ 1 min 8 s · fini à 09:34 » après. */
+export function turnLine({ running, elapsedMs, activity = '', endedAt = null }) {
+  const d = formatTurnDuration(elapsedMs);
+  if (running) return `✻ En cours… ${d}${activity ? ` · ${activity}` : ''}`;
+  const at = endedAt instanceof Date && !Number.isNaN(endedAt.getTime())
+    ? ` · fini à ${String(endedAt.getHours()).padStart(2, '0')}:${String(endedAt.getMinutes()).padStart(2, '0')}`
+    : '';
+  return `✻ ${d}${at}`;
+}
+
 /** Nombre de sessions qui attendent l'utilisateur (error exclu). */
 export function titleCount(cards) {
   return cards.filter((c) => c.state === 'needs_you').length;

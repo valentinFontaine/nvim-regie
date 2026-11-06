@@ -23,3 +23,17 @@
 ### Réflexion (thinking)
 - Vérifié dans le binaire 2.1.318 : `showThinkingSummaries` vaut `false` par défaut, donc blocs thinking vides dans le JSONL.
 - `--settings` injecte `showThinkingSummaries: true` ; le rendu « Réflexion » existait déjà.
+
+## Lot 2 : interface de la vue session
+
+### Neovim dans un cadre, en bas ou à droite
+- `#work` = conversation (ou sélecteur) + `#side` (barre de statut + cadre Neovim bordé, coins arrondis, marge intérieure).
+- En bas (défaut) : cadre aligné sur la colonne de conversation (60rem max), 16rem de haut. À droite : page coupée en deux moitiés, conversation sur toute sa moitié (padding fixe : un padding en % se calcule sur la largeur du parent, ce qui écrasait le texte).
+- Bouton « Neovim à droite / en bas » dans l'en-tête ; choix gardé par le navigateur (`localStorage`, lecture protégée). Le `ResizeObserver` existant refait le `fit` et redimensionne le pty nvim.
+- Tiroir terminal inchangé (toute la largeur).
+
+### Ligne d'activité sous la réponse
+- Observé sur 2.1.318 : un tour finit en général par une ligne JSONL `system` / `turn_duration` (`durationMs`, `timestamp`), y compris pour un tour de 3 s ; mais 2 des 6 derniers fichiers du projet n'en ont aucune (cause non identifiée), d'où le repli ci-dessous. Le verbe aléatoire du terminal (« Cogitated », « Reflecting ») n'y est pas : non repris.
+- Parseur : item `{kind: "turn", role: "system", durationMs}` ; rendu `✻ 1 min 8 s · fini à 09:34` (arrondi à la seconde comme le terminal).
+- Pendant le tour (état `running` / `needs_you`) : `✻ En cours… 12 s · <activité du hook PreToolUse>`, rafraîchie chaque seconde, toujours en bas de la conversation.
+- Au `Stop`, ligne provisoire calculée côté navigateur, remplacée par `turn_duration` quand il arrive (repli si absent).

@@ -1,6 +1,6 @@
 import { renderMarkdown, toolTarget } from '/render.js';
 import { ansiSegments } from '/ansi.js';
-import { COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo } from '/dashboard.js';
+import { COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo, turnLine } from '/dashboard.js';
 
 const status = document.getElementById('status');
 const conv = document.getElementById('conv');
@@ -34,6 +34,18 @@ function setDrawer(open) {
   if (open) { fit.fit(); term.focus(); }
 }
 toggle.onclick = () => setDrawer(!drawer.classList.contains('open'));
+
+// Neovim sous la conversation (défaut) ou à droite ; choix retenu par ce navigateur seulement.
+const layoutBtn = document.getElementById('layout');
+function setLayout(right) {
+  document.body.classList.toggle('nvim-right', right);
+  layoutBtn.textContent = right ? 'Neovim en bas' : 'Neovim à droite';
+  try { localStorage.setItem('nvim-layout', right ? 'right' : 'bottom'); } catch { /* stockage indisponible */ }
+}
+let savedLayout = null;
+try { savedLayout = localStorage.getItem('nvim-layout'); } catch { /* stockage indisponible */ }
+setLayout(savedLayout === 'right');
+layoutBtn.onclick = () => { setLayout(!document.body.classList.contains('nvim-right')); nterm.focus(); };
 
 let ws = null;
 let msgEls = new Map();   // msgId -> élément .body
@@ -81,6 +93,13 @@ function addItem(item) {
     }
     return;
   }
+  if (item.kind === 'turn') {
+    // La vraie fin de tour (JSONL) remplace la ligne provisoire calculée au Stop.
+    if (liveEl && !turnStart) { liveEl.remove(); liveEl = null; }
+    const end = item.ts ? new Date(item.ts) : null;
+    conv.append(el('div', 'turn', turnLine({ running: false, elapsedMs: item.durationMs, endedAt: end })));
+    return;
+  }
   const body = bodyFor(item);
   if (item.kind === 'text') {
     if (item.role === 'user') {
@@ -112,7 +131,49 @@ function addItems(items) {
   // La ligne utilisateur du transcript remplace l'affichage provisoire (même règle que session.js).
   if (pendingEl && items.some(isUserPrompt)) { pendingEl.remove(); pendingEl = null; }
   for (const it of items) addItem(it);
+  if (liveEl && turnStart) conv.append(liveEl); // la ligne « En cours… » reste sous la réponse
   if (stick) conv.scrollTop = conv.scrollHeight;
+}
+
+// ---------- Ligne d'activité sous la réponse (« ✻ En cours… 12 s · outil ») ----------
+
+let liveEl = null;     // ligne en cours, ou provisoire après le Stop en attendant turn_duration
+let turnStart = null;  // début du tour en cours (ms), null hors tour
+let liveActivity = '';
+let lastState = null;
+
+function renderLive() {
+  if (!liveEl || !turnStart) return;
+  liveEl.textContent = turnLine({ running: true, elapsedMs: Date.now() - turnStart, activity: liveActivity });
+}
+setInterval(renderLive, 1000);
+
+function updateLive(msg) {
+  const busy = msg.state === 'running' || msg.state === 'needs_you';
+  const wasBusy = lastState === 'running' || lastState === 'needs_you';
+  const first = lastState === null;
+  lastState = msg.state;
+  if (busy) {
+    // Page ouverte en plein tour : `since` (début de l'état) est la meilleure estimation.
+    if (!turnStart) turnStart = first ? (msg.since ?? Date.now()) : Date.now();
+    liveActivity = msg.activity || '';
+    if (!liveEl) liveEl = el('div', 'turn live');
+    const stick = conv.scrollHeight - conv.scrollTop - conv.clientHeight < 80;
+    conv.append(liveEl);
+    renderLive();
+    if (stick) conv.scrollTop = conv.scrollHeight;
+  } else if (wasBusy && turnStart && liveEl) {
+    // Fin de tour : ligne provisoire, remplacée par turn_duration s'il arrive du JSONL.
+    liveEl.classList.remove('live');
+    liveEl.textContent = turnLine({ running: false, elapsedMs: Date.now() - turnStart, endedAt: new Date() });
+    turnStart = null;
+  } else if (liveEl && turnStart) {
+    liveEl.remove(); liveEl = null; turnStart = null;
+  }
+}
+
+function resetLive() {
+  liveEl = null; turnStart = null; liveActivity = ''; lastState = null;
 }
 
 /** Barre de statut de claude (sortie de la statusLine de l'utilisateur, couleurs ANSI comprises). */
@@ -146,6 +207,7 @@ function showState(msg) {
   stateEl.textContent = STATE_LABELS[msg.state] ?? msg.state;
   if (msg.activity) stateEl.textContent += ` · ${msg.activity}`;
   interruptBtn.disabled = msg.state !== 'running';
+  updateLive(msg);
   if (msg.state === 'needs_you') setDrawer(true);
   if (msg.state === 'done_unread' && document.hasFocus()) send({ type: 'read' });
 }
@@ -269,6 +331,7 @@ function resetSessionView() {
   conv.replaceChildren();
   msgEls = new Map();
   pendingEl = null;
+  resetLive();
   showStatusLine('');
   toolEls = new Map();
   nfit.fit();
@@ -342,6 +405,7 @@ function showDash() {
   dash.hidden = false;
   backLink.hidden = true;
   toggle.hidden = true;
+  layoutBtn.hidden = true;
   interruptBtn.hidden = true;
   resumeBtn.hidden = true;
   stateEl.hidden = true;
@@ -360,6 +424,7 @@ function showSession(project) {
   sess.hidden = false;
   backLink.hidden = false;
   toggle.hidden = false;
+  layoutBtn.hidden = false;
   interruptBtn.hidden = false;
   stateEl.hidden = false;
   stateEl.dataset.state = '';
@@ -434,7 +499,7 @@ function connect() {
     else if (msg.type === 'transcript') addItems(msg.items);
     else if (msg.type === 'pending') showPending(msg.text);
     else if (msg.type === 'status') showStatusLine(msg.text);
-    else if (msg.type === 'transcript-reset') { conv.replaceChildren(); msgEls = new Map(); toolEls = new Map(); pendingEl = null; }
+    else if (msg.type === 'transcript-reset') { conv.replaceChildren(); msgEls = new Map(); toolEls = new Map(); pendingEl = null; resetLive(); }
     else if (msg.type === 'state') showState(msg);
     else if (msg.type === 'exit') status.textContent = `claude terminé (code ${msg.code})`;
     else if (msg.type === 'error') status.textContent = `erreur : ${msg.message}`;

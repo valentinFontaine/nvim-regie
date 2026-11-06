@@ -89,8 +89,14 @@ function resultText(content) {
  */
 export function toItems(entry) {
   try {
-    if (!entry || (entry.type !== 'user' && entry.type !== 'assistant')) return [];
-    if (entry.isMeta || entry.isSidechain) return [];
+    if (!entry || entry.isMeta || entry.isSidechain) return [];
+    // Fin de tour (observé sur 2.1.318) : même info que « Cogitated for 11s · done 11:58 » du terminal.
+    if (entry.type === 'system' && entry.subtype === 'turn_duration') {
+      if (!Number.isFinite(entry.durationMs)) return [];
+      const ts = typeof entry.timestamp === 'string' ? entry.timestamp : null;
+      return [{ msgId: entry.uuid ?? null, role: 'system', ts, kind: 'turn', durationMs: entry.durationMs }];
+    }
+    if (entry.type !== 'user' && entry.type !== 'assistant') return [];
     const msg = entry.message;
     if (!msg || typeof msg !== 'object') return [];
     const role = entry.type;
