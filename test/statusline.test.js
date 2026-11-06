@@ -10,7 +10,7 @@ import { createApp, hooksSettings } from '../src/server.js';
 import { SessionManager } from '../src/session.js';
 
 const RELAY = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'statusline-relay.mjs');
-const PORT = 47656;
+const PORT = 47657;
 const token = 'a'.repeat(64);
 const ID = '22222222-2222-4222-8222-222222222222';
 const echoer = { command: process.execPath, args: () => ['-e', "process.stdout.write('READY\\n');setInterval(()=>{},1000)"] };
