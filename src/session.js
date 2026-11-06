@@ -32,21 +32,49 @@ export function lastAnswer(items) {
 
 const ENTER_DELAY_MS = 150;
 
+export const MODES = ['write', 'consult'];
+const MAX_LABEL = 24;
+const LABEL_RE = /^[\p{L}\p{N} ._-]*$/u;
+
+/** Étiquette libre d'une session (« base », « code ») : affichée seulement, mais bornée et sans caractère spécial. */
+export function cleanLabel(label) {
+  if (label === undefined || label === null) return '';
+  if (typeof label !== 'string') throw new TypeError('étiquette invalide');
+  const t = label.trim();
+  if (t.length > MAX_LABEL || !LABEL_RE.test(t)) throw new TypeError('étiquette invalide');
+  return t;
+}
+
+/** Arguments de `claude` : reprise ou nouvel id, lecture seule (plan) en consultation, puis les réglages injectés. */
+export function claudeArgs(id, resume, mode, settings) {
+  return [
+    ...(resume ? ['--resume', resume] : ['--session-id', id]),
+    ...(mode === 'consult' ? ['--permission-mode', 'plan'] : []),
+    '--settings', settings,
+  ];
+}
+
 function checkDim(n, max, nom) {
   if (!Number.isInteger(n) || n < 1 || n > max) throw new RangeError(`${nom} invalide`);
 }
 
 export class Session {
-  /** `resume` : id d'une session claude passée à reprendre (`--resume`) ; l'id des hooks (`this.id`) reste propre à ce pty. */
-  constructor(project, spec, cols, rows, onChange = null, resume = undefined) {
+  /**
+   * `resume` : id d'une session claude passée à reprendre (`--resume`) ; l'id des hooks (`this.id`) reste propre à ce pty.
+   * `mode` : 'write' (défaut) ou 'consult' (lecture seule, `--permission-mode plan`) ; `label` : étiquette libre.
+   */
+  constructor(project, spec, cols, rows, onChange = null, { resume, mode = 'write', label } = {}) {
     checkDim(cols, MAX_COLS, 'cols');
     checkDim(rows, MAX_ROWS, 'rows');
     if (resume !== undefined && (typeof resume !== 'string' || !UUID_RE.test(resume))) throw new TypeError('id de reprise invalide');
+    if (!MODES.includes(mode)) throw new TypeError('mode invalide');
+    this.label = cleanLabel(label);
+    this.mode = mode;
     this.project = project;
     this.spec = spec;
     this.onChange = onChange;
     this.id = randomUUID();
-    this.claudeId = resume ?? this.id;
+    this.claudeId = resume ? resume.toLowerCase() : this.id;
     this.snap = initialState();
     this.since = Date.now();
     this.excerpt = '';
@@ -54,7 +82,7 @@ export class Session {
     this.listeners = new Set();
     this.exited = false;
     this.exitCode = null;
-    this.pty = pty.spawn(spec.command, spec.args(this.id, resume), {
+    this.pty = pty.spawn(spec.command, spec.args(this.id, resume, mode), {
       name: 'xterm-256color',
       cols,
       rows,
@@ -223,6 +251,9 @@ export class Session {
     if (typeof given !== 'string' || !this.tail || !this.spec?.transcript?.accept) return;
     const file = this.spec.transcript.accept(given);
     if (!file || sameFile(file, this.tail.file)) return;
+    // Le nom du fichier est l'id de session claude : on le suit pour reconnaître une reprise déjà ouverte.
+    const base = path.basename(file, '.jsonl');
+    if (UUID_RE.test(base)) this.claudeId = base.toLowerCase();
     this.tail.retarget(file);
     this.backlogSeen = false;
     this.#resetConversation();
@@ -287,19 +318,29 @@ export class SessionManager {
     this.watchers = new Map(); // fn -> projets de la config
   }
 
-  /** Résumé de chaque projet de la config (session vivante ou « stopped »), branche lue dans .git/HEAD. */
+  /**
+   * Une carte par session (vivante ou sortie, jusqu'à close) des projets de la config, dans l'ordre de création ;
+   * une carte « stopped » pour chaque projet sans session. Branche lue dans .git/HEAD.
+   */
   summaries(projects = []) {
     const list = [];
     for (const p of projects) {
-      const s = this.sessions.get(p.name);
-      list.push({
-        project: p.name,
-        branch: readBranch(p.path),
-        state: s ? s.snap.state : 'stopped',
-        activity: s ? s.snap.activity : '',
-        since: s ? s.since : null,
-        excerpt: s ? s.excerpt : '',
-      });
+      const branch = readBranch(p.path);
+      let any = false;
+      for (const s of this.sessions.values()) {
+        if (s.project.name !== p.name) continue;
+        any = true;
+        list.push({
+          key: s.id, id: s.id, project: p.name, branch, mode: s.mode, label: s.label,
+          state: s.snap.state, activity: s.snap.activity, since: s.since, excerpt: s.excerpt,
+        });
+      }
+      if (!any) {
+        list.push({
+          key: `p:${p.name}`, id: null, project: p.name, branch, mode: null, label: '',
+          state: 'stopped', activity: '', since: null, excerpt: '',
+        });
+      }
     }
     return list;
   }
@@ -315,29 +356,39 @@ export class SessionManager {
     for (const [fn, projects] of this.watchers) fn({ type: 'sessions', sessions: this.summaries(projects) });
   }
 
-  start(project, cols, rows, { resume } = {}) {
-    const existing = this.sessions.get(project.name);
-    if (existing && !existing.exited) return existing;
-    const s = new Session(project, this.spec, cols, rows, () => this.#notify(), resume);
-    this.sessions.set(project.name, s);
+  /** Démarre toujours une nouvelle session (plusieurs par projet) ; opts : { resume, mode, label }. */
+  start(project, cols, rows, opts = {}) {
+    const s = new Session(project, this.spec, cols, rows, () => this.#notify(), opts);
+    this.sessions.set(s.id, s);
     this.#notify();
     return s;
   }
 
-  /** Tue la session vivante du projet (s'il y en a une) puis en démarre une autre, éventuellement en reprise. */
-  restart(project, cols, rows, opts = {}) {
-    const old = this.sessions.get(project.name);
-    if (old) {
-      this.sessions.delete(project.name);
-      old.kill();
-    }
-    return this.start(project, cols, rows, opts);
+  get(id) {
+    return (typeof id === 'string' && this.sessions.get(id)) || null;
   }
 
   /** Retrouve une session par son id (route des hooks). */
   byId(id) {
-    for (const s of this.sessions.values()) if (s.id === id) return s;
+    return this.get(id);
+  }
+
+  /** Session vivante qui suit déjà le JSONL `cid` : on ne lance jamais deux claude sur le même fichier. */
+  byClaudeId(cid) {
+    if (typeof cid !== 'string') return null;
+    const want = cid.toLowerCase();
+    for (const s of this.sessions.values()) if (!s.exited && s.claudeId === want) return s;
     return null;
+  }
+
+  /** Tue la session (claude et Neovim) et la retire ; false si l'id est inconnu. */
+  close(id) {
+    const s = this.get(id);
+    if (!s) return false;
+    this.sessions.delete(id);
+    s.kill();
+    this.#notify();
+    return true;
   }
 
   killAll() {

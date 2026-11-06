@@ -1,6 +1,6 @@
 import { renderMarkdown, toolTarget } from '/render.js';
 import { ansiSegments } from '/ansi.js';
-import { COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo, turnLine } from '/dashboard.js';
+import { COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo, turnLine, writersIn, sessionName, pastSessionAction } from '/dashboard.js';
 
 const status = document.getElementById('status');
 const conv = document.getElementById('conv');
@@ -17,6 +17,9 @@ const projName = document.getElementById('proj-name');
 const notifBtn = document.getElementById('notif');
 const picker = document.getElementById('picker');
 const resumeBtn = document.getElementById('resume-btn');
+const addBtn = document.getElementById('add-btn');
+const closeBtn = document.getElementById('close-btn');
+const tabsEl = document.getElementById('tabs');
 
 const term = new window.Terminal({ cursorBlink: true, fontSize: 14, scrollback: 5000 });
 const fit = new window.FitAddon.FitAddon();
@@ -53,7 +56,8 @@ let toolEls = new Map();  // toolUseId -> <details>
 let cards = [];           // dernier flux global reçu
 let seeded = false;       // la première liste reçue ne déclenche aucune notification
 let current = null;       // projet affiché dans la vue session (null = tableau de bord)
-let selected = null;      // carte sélectionnée au clavier
+let currentId = null;     // id de la session affichée (null : choix d'une nouvelle session ou reprise)
+let selected = null;      // key de la carte sélectionnée au clavier
 let pendingEl = null;     // prompt envoyé, pas encore lu dans le transcript
 
 function send(msg) {
@@ -212,7 +216,7 @@ function showState(msg) {
   if (msg.state === 'done_unread' && document.hasFocus()) send({ type: 'read' });
 }
 window.addEventListener('focus', () => {
-  if (current && stateEl.dataset.state === 'done_unread') send({ type: 'read' });
+  if (currentId && stateEl.dataset.state === 'done_unread') send({ type: 'read' });
 });
 
 // ---------- Tableau de bord ----------
@@ -230,20 +234,38 @@ function displayOrder() {
   return COLUMNS.flatMap((c) => g[c.id]);
 }
 
+/** Session vivante : #/s/<id> ; projet sans session : #/p/<nom> (choix nouvelle / reprise). */
+function cardHref(c) {
+  return c.id ? `#/s/${encodeURIComponent(c.id)}` : `#/p/${encodeURIComponent(c.project)}`;
+}
+function openCard(c) { location.hash = cardHref(c); }
+function openKey(key) {
+  const c = cards.find((x) => x.key === key);
+  if (c) openCard(c);
+}
+
+function tagFor(c) {
+  const name = sessionName(c);
+  return name ? el('span', `tag ${c.mode ?? ''}`, name) : null;
+}
+
 function makeCard(c) {
-  const a = el('article', `card${c.project === selected ? ' selected' : ''}`);
+  const a = el('article', `card${c.key === selected ? ' selected' : ''}`);
   a.dataset.state = c.state;
-  a.dataset.project = c.project;
+  a.dataset.key = c.key;
   a.tabIndex = 0;
   const head = el('div', 'head');
   const dur = el('span', 'dur');
-  head.append(el('span', 'proj', c.project), el('span', 'branch', c.branch ?? ''), dur);
+  head.append(el('span', 'proj', c.project));
+  const tag = tagFor(c);
+  if (tag) head.append(tag);
+  head.append(el('span', 'branch', c.branch ?? ''), dur);
   durEls.push({ el: dur, since: c.state === 'stopped' ? null : c.since });
   a.append(head, el('div', 'label', STATE_LABELS[c.state] ?? c.state));
   if (c.activity) a.append(el('div', 'act', c.activity));
   if (c.excerpt) a.append(el('div', 'exc', c.excerpt));
-  a.onclick = () => openProject(c.project);
-  a.onkeydown = (ev) => { if (ev.key === 'Enter') openProject(c.project); };
+  a.onclick = () => openCard(c);
+  a.onkeydown = (ev) => { if (ev.key === 'Enter') openCard(c); };
   return a;
 }
 
@@ -262,17 +284,34 @@ function renderDash() {
   tickDurations();
 }
 
-function select(project) {
-  selected = project;
+function select(key) {
+  selected = key;
   for (const a of dash.querySelectorAll('.card')) {
-    const on = a.dataset.project === project;
+    const on = a.dataset.key === key;
     a.classList.toggle('selected', on);
     if (on) a.scrollIntoView({ block: 'nearest' });
   }
 }
 
-function openProject(project) {
-  location.hash = `#/s/${encodeURIComponent(project)}`;
+/** Onglets des sessions sœurs (même dossier) dans la vue session. */
+function renderTabs() {
+  const sibs = current === null ? [] : cards.filter((c) => c.project === current && c.id);
+  tabsEl.hidden = sibs.length === 0 || (sibs.length === 1 && sibs[0].id === currentId);
+  tabsEl.replaceChildren(...sibs.map((c, i) => {
+    const a = el('a', c.id === currentId ? 'on' : null);
+    a.href = cardHref(c);
+    a.dataset.state = c.state;
+    a.title = STATE_LABELS[c.state] ?? c.state;
+    a.append(tagFor(c) ?? el('span', 'tag', `session ${i + 1}`));
+    return a;
+  }));
+}
+
+function updateSessionButtons() {
+  resumeBtn.hidden = !currentId;
+  closeBtn.hidden = !currentId;
+  addBtn.hidden = current === null;
+  renderTabs();
 }
 
 // ---------- Notifications (needs_you uniquement) ----------
@@ -300,30 +339,35 @@ function beep() {
 }
 
 function alertNeedsYou(card) {
-  if (current === card.project && document.hasFocus()) return; // déjà sous les yeux
+  if (currentId === card.id && document.hasFocus()) return; // déjà sous les yeux
   beep();
   if ('Notification' in window && Notification.permission === 'granted') {
     try {
-      const n = new Notification(`${card.project} attend ta réponse`, { body: card.activity || 'Permission demandée' });
-      n.onclick = () => { window.focus(); openProject(card.project); n.close(); };
+      const name = sessionName(card);
+      const n = new Notification(`${card.project}${name ? ` · ${name}` : ''} attend ta réponse`, { body: card.activity || 'Permission demandée' });
+      n.onclick = () => { window.focus(); openCard(card); n.close(); };
     } catch { /* ignoré */ }
   }
 }
 
 function onSessions(list) {
-  const before = new Map(cards.map((c) => [c.project, c.state]));
+  const before = new Map(cards.map((c) => [c.key, c.state]));
   cards = list;
   if (seeded) {
-    for (const c of cards) if (c.state === 'needs_you' && before.get(c.project) !== 'needs_you') alertNeedsYou(c);
+    for (const c of cards) if (c.state === 'needs_you' && before.get(c.key) !== 'needs_you') alertNeedsYou(c);
   }
   seeded = true;
   document.title = titleFor(titleCount(cards));
-  if (current === null) renderDash();
+  if (current === null) { renderDash(); return; }
+  // Session affichée fermée ailleurs (autre onglet du navigateur) : retour au tableau de bord.
+  if (currentId && !cards.some((c) => c.id === currentId)) { location.hash = '#/'; return; }
+  renderTabs();
 }
 
-// ---------- Sélecteur de reprise ----------
+// ---------- Sélecteur : nouvelle session ou reprise ----------
 
-let started = false; // une session vit-elle déjà pour le projet affiché ?
+let pickerMode = 'new'; // 'new' : nouvelle session dans le dossier ; 'replace' : « Reprendre… » remplace la session affichée
+let pickerBack = null;  // session à rouvrir si on annule « + Session »
 
 function resetSessionView() {
   term.reset();
@@ -350,13 +394,45 @@ function openPicker() {
   send({ type: 'list-sessions', project: current });
 }
 
+/** Mode et étiquette choisis dans le formulaire du sélecteur. */
+function pickerChoice() {
+  const mode = picker.querySelector('input[name="mode"]:checked')?.value ?? 'write';
+  const label = picker.querySelector('input[name="label"]')?.value.trim() ?? '';
+  return { mode, label: label || undefined };
+}
+
+function newForm() {
+  const form = el('div', 'form');
+  const radio = (value, text, checked) => {
+    const l = el('label');
+    const r = el('input');
+    r.type = 'radio'; r.name = 'mode'; r.value = value; r.checked = checked;
+    l.append(r, ` ${text}`);
+    return l;
+  };
+  const label = el('input');
+  label.type = 'text'; label.name = 'label'; label.maxLength = 24; label.placeholder = 'étiquette (facultatif)';
+  form.append(radio('write', 'Écrivain', true), radio('consult', 'Consultation (lecture seule)', false), label);
+  const writers = writersIn(cards, current);
+  const warn = el('p', 'warn', `${writers} écrivain${writers > 1 ? 's' : ''} déjà dans ce dossier : chacun ne committe que ses fichiers.`);
+  warn.hidden = writers === 0;
+  form.onchange = () => { warn.hidden = writers === 0 || pickerChoice().mode !== 'write'; };
+  return [form, warn];
+}
+
 function renderPicker(list) {
-  const nodes = [el('h2', null, started ? 'Reprendre une session' : 'Choisir une session')];
-  if (started) {
+  const replace = pickerMode === 'replace';
+  const nodes = [el('h2', null, replace ? 'Reprendre une session' : `Nouvelle session dans ${current}`)];
+  if (replace || pickerBack) {
     const cancel = el('button', 'opt', 'Annuler');
-    cancel.onclick = closePicker;
+    cancel.onclick = () => {
+      if (replace) closePicker();
+      else location.hash = `#/s/${encodeURIComponent(pickerBack)}`;
+    };
     nodes.push(cancel);
-  } else {
+  }
+  if (!replace) {
+    nodes.push(...newForm());
     const fresh = el('button', 'opt new', 'Nouvelle session');
     fresh.onclick = () => startNew();
     nodes.push(fresh);
@@ -365,8 +441,15 @@ function renderPicker(list) {
   const now = Date.now();
   for (const s of list) {
     const b = el('button', 'opt');
-    b.append(el('span', 't', s.title), el('span', 'ago', formatAgo(s.mtime, now)));
-    b.onclick = () => resumeSession(s.id);
+    b.append(el('span', 't', s.title));
+    if (s.open) b.append(el('span', 'open-tag', s.open === currentId ? 'affichée' : 'ouverte'));
+    b.append(el('span', 'ago', formatAgo(s.mtime, now)));
+    b.onclick = () => {
+      const act = pastSessionAction(s, currentId);
+      if (act === 'stay') closePicker();
+      else if (act === 'goto') location.hash = `#/s/${encodeURIComponent(s.open)}`;
+      else resumeSession(s.id);
+    };
     nodes.push(b);
   }
   picker.replaceChildren(...nodes);
@@ -375,49 +458,73 @@ function renderPicker(list) {
 }
 
 function startNew() {
-  started = true;
-  resumeBtn.hidden = false;
+  const { mode, label } = pickerChoice();
+  resetSessionView();
   closePicker();
-  nfit.fit();
-  send({ type: 'start', project: current, cols: term.cols, rows: term.rows });
+  send({ type: 'start', project: current, mode, label, cols: term.cols, rows: term.rows });
   send({ type: 'nvim-resize', cols: nterm.cols, rows: nterm.rows });
 }
 
 function resumeSession(id) {
-  const st = stateEl.dataset.state;
-  if (started && (st === 'running' || st === 'needs_you')
-      && !confirm('La session en cours sera arrêtée (le tour en cours est perdu). Reprendre quand même ?')) return;
+  const msg = { type: 'resume', project: current, id, cols: term.cols, rows: term.rows };
+  if (pickerMode === 'replace') {
+    const st = stateEl.dataset.state;
+    if ((st === 'running' || st === 'needs_you')
+        && !confirm('La session affichée sera arrêtée (le tour en cours est perdu). Reprendre quand même ?')) return;
+    msg.replace = currentId;
+    currentId = null; // la session remplacée disparaît de la liste : ce n'est pas une fermeture venue d'ailleurs
+  } else {
+    Object.assign(msg, pickerChoice());
+  }
   resetSessionView();
-  started = true;
-  resumeBtn.hidden = false;
   closePicker();
-  send({ type: 'resume', project: current, id, cols: term.cols, rows: term.rows });
+  send(msg);
   send({ type: 'nvim-resize', cols: nterm.cols, rows: nterm.rows });
 }
 
-resumeBtn.onclick = () => openPicker();
+/** Réponse du serveur à start / resume : la session affichée a désormais cet id. */
+function onStarted(id) {
+  currentId = id;
+  pickerBack = null;
+  history.replaceState(null, '', `#/s/${encodeURIComponent(id)}`);
+  updateSessionButtons();
+}
+
+resumeBtn.onclick = () => { pickerMode = 'replace'; openPicker(); };
+addBtn.onclick = () => {
+  pickerBack = currentId;
+  location.hash = `#/p/${encodeURIComponent(current)}`;
+};
+closeBtn.onclick = () => {
+  if (!currentId) return;
+  if (!confirm('Arrêter claude et Neovim de cette session ? (le transcript reste, la session pourra être reprise)')) return;
+  const id = currentId;
+  send({ type: 'close', id });
+  currentId = null;
+  location.hash = '#/';
+};
 
 // ---------- Vues et routage ----------
 
 function showDash() {
   if (current !== null) { send({ type: 'detach' }); current = null; }
+  currentId = null;
+  pickerBack = null;
   sess.hidden = true;
   dash.hidden = false;
   backLink.hidden = true;
   toggle.hidden = true;
   layoutBtn.hidden = true;
   interruptBtn.hidden = true;
-  resumeBtn.hidden = true;
   stateEl.hidden = true;
   projName.textContent = '';
-  started = false;
+  updateSessionButtons();
   setDrawer(false);
   updateNotifButton();
   renderDash();
 }
 
-function showSession(project) {
-  if (current === project) return;
+function enterSessionView(project) {
   if (current !== null) send({ type: 'detach' });
   current = project;
   dash.hidden = true;
@@ -432,27 +539,41 @@ function showSession(project) {
   projName.textContent = project;
   updateNotifButton();
   resetSessionView();
-  const card = cards.find((c) => c.project === project);
-  started = !!card && card.state !== 'stopped' && card.state !== 'error';
-  resumeBtn.hidden = !started;
-  if (started) {
-    picker.hidden = true;
-    conv.hidden = false;
-    send({ type: 'start', project, cols: term.cols, rows: term.rows });
-    send({ type: 'nvim-resize', cols: nterm.cols, rows: nterm.rows });
-    nterm.focus();
-  } else {
-    openPicker(); // rien ne démarre avant le choix
-  }
+}
+
+/** Vue d'une session vivante (ou sortie, tant qu'elle n'est pas fermée). */
+function showSession(card) {
+  if (currentId === card.id) return;
+  enterSessionView(card.project);
+  currentId = card.id;
+  pickerBack = null;
+  picker.hidden = true;
+  conv.hidden = false;
+  send({ type: 'attach', id: card.id });
+  send({ type: 'resize', cols: term.cols, rows: term.rows });
+  send({ type: 'nvim-resize', cols: nterm.cols, rows: nterm.rows });
+  updateSessionButtons();
+  nterm.focus();
+}
+
+/** Projet sans session affichée : rien ne démarre avant le choix (nouvelle session ou reprise). */
+function showProject(project) {
+  enterSessionView(project);
+  currentId = null;
+  pickerMode = 'new';
+  updateSessionButtons();
+  openPicker();
 }
 
 function route() {
-  const m = /^#\/s\/(.+)$/.exec(location.hash);
-  let project = null;
+  const m = /^#\/([sp])\/(.+)$/.exec(location.hash);
+  let v = null;
   if (m) {
-    try { project = decodeURIComponent(m[1]); } catch { project = null; }
+    try { v = decodeURIComponent(m[2]); } catch { v = null; }
   }
-  if (project && cards.some((c) => c.project === project)) showSession(project);
+  const card = m?.[1] === 's' ? cards.find((c) => c.id === v) : null;
+  if (card) showSession(card);
+  else if (m?.[1] === 'p' && cards.some((c) => c.project === v)) showProject(v);
   else showDash();
 }
 window.addEventListener('hashchange', route);
@@ -462,21 +583,21 @@ window.addEventListener('hashchange', route);
 let gPending = false;
 document.addEventListener('keydown', (ev) => {
   if (current !== null || ev.ctrlKey || ev.metaKey || ev.altKey) return;
-  const order = displayOrder().map((c) => c.project);
+  const order = displayOrder().map((c) => c.key);
   if (!order.length) return;
   const i = order.indexOf(selected);
   if (gPending) {
     gPending = false;
     if (ev.key === 'n') {
-      const p = nextWaiting(cards, selected);
-      if (p) { select(p); openProject(p); }
+      const k = nextWaiting(cards, selected);
+      if (k) { select(k); openKey(k); }
       ev.preventDefault();
       return;
     }
   }
   if (ev.key === 'j') select(order[Math.min(order.length - 1, i + 1)]);
   else if (ev.key === 'k') select(order[Math.max(0, i - 1)]);
-  else if (ev.key === 'Enter' && selected && ev.target === document.body) openProject(selected);
+  else if (ev.key === 'Enter' && selected && ev.target === document.body) openKey(selected);
   else if (ev.key === 'g') { gPending = true; setTimeout(() => { gPending = false; }, 1000); }
 });
 
@@ -490,8 +611,9 @@ function connect() {
   };
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === 'sessions') { onSessions(msg.sessions); if (current === null && location.hash.startsWith('#/s/')) route(); }
+    if (msg.type === 'sessions') { onSessions(msg.sessions); if (current === null && /^#\/[sp]\//.test(location.hash)) route(); }
     else if (current === null) return; // messages de session : seulement dans la vue session
+    else if (msg.type === 'started') onStarted(msg.id);
     else if (msg.type === 'past-sessions') { if (msg.project === current && !picker.hidden) renderPicker(msg.sessions); }
     else if (msg.type === 'data') term.write(msg.data);
     else if (msg.type === 'nvim-data') nterm.write(msg.data);
@@ -502,7 +624,10 @@ function connect() {
     else if (msg.type === 'transcript-reset') { conv.replaceChildren(); msgEls = new Map(); toolEls = new Map(); pendingEl = null; resetLive(); }
     else if (msg.type === 'state') showState(msg);
     else if (msg.type === 'exit') status.textContent = `claude terminé (code ${msg.code})`;
-    else if (msg.type === 'error') status.textContent = `erreur : ${msg.message}`;
+    else if (msg.type === 'error') {
+      status.textContent = `erreur : ${msg.message}`;
+      if (currentId === null && picker.hidden) openPicker(); // démarrage refusé (étiquette invalide…) : retour au choix
+    }
   };
   ws.onclose = () => { status.textContent = 'déconnecté'; };
 }

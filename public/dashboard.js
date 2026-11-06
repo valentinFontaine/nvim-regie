@@ -14,13 +14,26 @@ export function columnOf(state) {
   return 'idle';
 }
 
-// Depuis le plus ancien `since` (attente la plus longue) ; sans `since` en dernier ; égalités par nom.
+// Depuis le plus ancien `since` (attente la plus longue) ; sans `since` en dernier ; égalités par projet puis key.
 const byAge = (a, b) => {
   const x = a.since ?? Infinity;
   const y = b.since ?? Infinity;
   if (x !== y) return x < y ? -1 : 1;
-  return String(a.project).localeCompare(String(b.project));
+  return String(a.project).localeCompare(String(b.project)) || String(a.key).localeCompare(String(b.key));
 };
+
+/** Sessions « écrivain » encore vivantes dans le dossier du projet (pour l'avertissement). */
+export function writersIn(cards, project) {
+  return cards.filter((c) => c.project === project && c.mode === 'write' && c.state !== 'error' && c.state !== 'stopped').length;
+}
+
+/** Nom court d'une session : son étiquette, sinon son mode. */
+export function sessionName(c) {
+  if (c.label) return c.label;
+  if (c.mode === 'consult') return 'lecture';
+  if (c.mode === 'write') return 'écrivain';
+  return '';
+}
 
 export function groupByColumn(cards) {
   const g = Object.fromEntries(COLUMNS.map((c) => [c.id, []]));
@@ -65,13 +78,13 @@ export function titleCount(cards) {
 
 export const titleFor = (n) => (n > 0 ? `(${n}) nvim-regie` : 'nvim-regie');
 
-/** Projet needs_you qui suit `current` dans l'ordre d'affichage, en boucle ; null si aucun. */
+/** Key de la carte needs_you qui suit `current` (une key) dans l'ordre d'affichage, en boucle ; null si aucune. */
 export function nextWaiting(cards, current) {
   const sorted = [...cards].sort(byAge);
-  const start = sorted.findIndex((c) => c.project === current);
+  const start = sorted.findIndex((c) => c.key === current);
   for (let k = 1; k <= sorted.length; k++) {
     const c = sorted[(start + k + sorted.length) % sorted.length];
-    if (c.state === 'needs_you') return c.project;
+    if (c.state === 'needs_you') return c.key;
   }
   return null;
 }
@@ -86,4 +99,10 @@ export function formatAgo(then, now = Date.now()) {
   const h = Math.floor(m / 60);
   if (h < 24) return `il y a ${h} h`;
   return `il y a ${Math.floor(h / 24)} j`;
+}
+
+/** Clic sur une session passée du sélecteur : 'stay' (c'est celle affichée), 'goto' (ouverte ailleurs), 'resume'. */
+export function pastSessionAction(s, currentId) {
+  if (!s.open) return 'resume';
+  return s.open === currentId ? 'stay' : 'goto';
 }

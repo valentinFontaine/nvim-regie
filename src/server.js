@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { loadConfig } from './config.js';
-import { SessionManager } from './session.js';
+import { SessionManager, claudeArgs } from './session.js';
 import { findTranscript, defaultProjectsRoot, acceptTranscript } from './transcript.js';
 import { listPastSessions } from './sessions-list.js';
 import {
@@ -207,27 +207,58 @@ export function createApp({ config, token, sessions, pastSessions = (project) =>
       let msg;
       try { msg = JSON.parse(String(raw)); } catch { return reply({ type: 'error', message: 'JSON invalide' }); }
       if (!msg || typeof msg !== 'object') return reply({ type: 'error', message: 'message invalide' });
+      const findProject = () => config.projects.find((p) => p.name === msg.project);
+      const attach = (s) => {
+        if (unsub) unsub();
+        session = s;
+        unsub = s.subscribe(reply);
+      };
       try {
         if (msg.type === 'start') {
-          const project = config.projects.find((p) => p.name === msg.project);
+          const project = findProject();
           if (!project) return reply({ type: 'error', message: 'projet inconnu' });
-          if (unsub) unsub();
-          session = sessions.start(project, msg.cols, msg.rows);
-          unsub = session.subscribe(reply);
+          const s = sessions.start(project, msg.cols, msg.rows, { mode: msg.mode ?? 'write', label: msg.label });
+          reply({ type: 'started', id: s.id });
+          attach(s);
+        } else if (msg.type === 'attach') {
+          const s = sessions.get(msg.id);
+          if (!s) return reply({ type: 'error', message: 'session inconnue' });
+          attach(s);
         } else if (msg.type === 'list-sessions') {
-          const project = config.projects.find((p) => p.name === msg.project);
+          const project = findProject();
           if (!project) return reply({ type: 'error', message: 'projet inconnu' });
-          reply({ type: 'past-sessions', project: project.name, sessions: pastSessions(project) });
+          const list = pastSessions(project).map((x) => ({ ...x, open: sessions.byClaudeId(x.id)?.id ?? null }));
+          reply({ type: 'past-sessions', project: project.name, sessions: list });
         } else if (msg.type === 'resume') {
-          // Reprise : l'id doit figurer dans le listing du projet (donc être un fichier de ce projet) ; la session vivante est remplacée.
-          const project = config.projects.find((p) => p.name === msg.project);
+          // Reprise : l'id doit figurer dans le listing du projet (donc être un fichier de ce projet).
+          const project = findProject();
           if (!project) return reply({ type: 'error', message: 'projet inconnu' });
           if (typeof msg.id !== 'string' || !pastSessions(project).some((x) => x.id === msg.id.toLowerCase())) {
             return reply({ type: 'error', message: 'session inconnue' });
           }
-          if (unsub) unsub();
-          session = sessions.restart(project, msg.cols, msg.rows, { resume: msg.id.toLowerCase() });
-          unsub = session.subscribe(reply);
+          // `replace` : la session affichée, du même projet, est fermée et remplacée (bouton « Reprendre… »).
+          let old = null;
+          if (msg.replace !== undefined) {
+            old = sessions.get(msg.replace);
+            if (!old || old.project.name !== project.name) return reply({ type: 'error', message: 'session à remplacer inconnue' });
+          }
+          // Jamais deux claude sur le même JSONL : on rouvre celle qui le suit déjà.
+          const open = sessions.byClaudeId(msg.id);
+          if (open) {
+            reply({ type: 'started', id: open.id });
+            return attach(open);
+          }
+          const opts = { resume: msg.id.toLowerCase(), mode: msg.mode ?? old?.mode ?? 'write', label: msg.label ?? old?.label };
+          if (old) {
+            if (unsub && session === old) { unsub(); unsub = null; session = null; }
+            sessions.close(old.id);
+          }
+          const s = sessions.start(project, msg.cols, msg.rows, opts);
+          reply({ type: 'started', id: s.id });
+          attach(s);
+        } else if (msg.type === 'close') {
+          if (session && session.id === msg.id) { if (unsub) unsub(); unsub = null; session = null; }
+          if (!sessions.close(msg.id)) reply({ type: 'error', message: 'session inconnue' });
         } else if (msg.type === 'detach') {
           if (unsub) unsub();
           unsub = null;
@@ -286,7 +317,7 @@ async function main() {
   const token = createToken();
   const sessions = new SessionManager({
     command: claude,
-    args: (id, resume) => [...(resume ? ['--resume', resume] : ['--session-id', id]), '--settings', hooksSettings(config.port, token, id)],
+    args: (id, resume, mode) => claudeArgs(id, resume, mode, hooksSettings(config.port, token, id)),
     nvim: { path: config.nvimPath, lua: path.join(ROOT, 'nvim', 'regie.lua'), sendKey: config.sendKey },
     transcript: {
       resolve: (project, id) => findTranscript(defaultProjectsRoot(), project.path, id),

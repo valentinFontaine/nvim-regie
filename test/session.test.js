@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SessionManager } from '../src/session.js';
+import { SessionManager, cleanLabel, claudeArgs } from '../src/session.js';
 
 const SCRIPT = [
   "process.stdin.setRawMode && process.stdin.setRawMode(true);",
@@ -53,11 +53,71 @@ test('resize et write valident leurs entrées', () => {
   m.killAll();
 });
 
-test('une seule session par projet', () => {
+test('plusieurs sessions par projet : chaque start crée une session distincte', () => {
   const m = new SessionManager(echoer);
   const a = m.start({ name: 'p', path: process.cwd() }, 80, 24);
   const b = m.start({ name: 'p', path: process.cwd() }, 80, 24);
-  assert.equal(a, b);
+  assert.notEqual(a, b);
+  assert.notEqual(a.id, b.id);
+  assert.equal(m.get(a.id), a);
+  assert.equal(m.get(b.id), b);
+  assert.equal(m.get('inconnu'), null);
+  m.killAll();
+});
+
+test('mode : write par défaut, consult ajoute --permission-mode plan via args', () => {
+  const calls = [];
+  const m = new SessionManager({ command: process.execPath, args: (id, resume, mode) => { calls.push(mode); return ['-e', SCRIPT]; } });
+  const p = { name: 'p', path: process.cwd() };
+  const w = m.start(p, 80, 24);
+  const c = m.start(p, 80, 24, { mode: 'consult' });
+  assert.equal(w.mode, 'write');
+  assert.equal(c.mode, 'consult');
+  assert.deepEqual(calls, ['write', 'consult']);
+  assert.throws(() => m.start(p, 80, 24, { mode: 'root' }));
+  m.killAll();
+});
+
+test('claudeArgs : consult ajoute --permission-mode plan, write non', () => {
+  assert.deepEqual(claudeArgs('A', undefined, 'write', 'S'), ['--session-id', 'A', '--settings', 'S']);
+  assert.deepEqual(claudeArgs('A', RID, 'consult', 'S'), ['--resume', RID, '--permission-mode', 'plan', '--settings', 'S']);
+});
+
+test('cleanLabel : étiquette libre bornée, caractères sûrs seulement', () => {
+  assert.equal(cleanLabel(undefined), '');
+  assert.equal(cleanLabel('  base  '), 'base');
+  assert.equal(cleanLabel('code-front_2.é'), 'code-front_2.é');
+  assert.throws(() => cleanLabel('x'.repeat(25)));
+  assert.throws(() => cleanLabel('a\nb'));
+  assert.throws(() => cleanLabel('<b>'));
+  assert.throws(() => cleanLabel(42));
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24, { label: ' base ' });
+  assert.equal(s.label, 'base');
+  assert.throws(() => m.start({ name: 'p', path: process.cwd() }, 80, 24, { label: 'a\x1bb' }));
+  assert.equal(m.sessions.size, 1);
+  m.killAll();
+});
+
+test('close : tue la session et la retire', async () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  assert.equal(m.close(s.id), true);
+  assert.equal(m.get(s.id), null);
+  assert.equal(m.byId(s.id), null);
+  assert.equal(m.close(s.id), false);
+  await until(() => s.exited);
+});
+
+test('byClaudeId : retrouve la session vivante qui suit ce JSONL, pas une session sortie', async () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24, { resume: RID });
+  assert.equal(m.byClaudeId(RID), s);
+  assert.equal(m.byClaudeId(RID.toUpperCase()), s);
+  assert.equal(m.byClaudeId(s.id), null);
+  s.write('q');
+  await until(() => s.exited);
+  assert.equal(m.byClaudeId(RID), null);
   m.killAll();
 });
 
@@ -175,6 +235,21 @@ test('transcript_path différent (/clear, /resume) : le suivi bascule sur le nou
   m.killAll();
 });
 
+test('bascule de transcript vers <uuid>.jsonl : claudeId suit (byClaudeId reste juste après /clear)', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'regie-c-'));
+  const b = path.join(dir, `${RID}.jsonl`);
+  fs.writeFileSync(b, '');
+  const m = new SessionManager({ ...echoer, transcript: { resolve: () => null, accept: (p) => (p === b ? b : null), intervalMs: 20 } });
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.applyHook({ hook_event_name: 'UserPromptSubmit', transcript_path: b });
+  assert.equal(s.claudeId, RID);
+  assert.equal(m.byClaudeId(RID), s);
+  m.killAll();
+});
+
 test('SessionEnd reason=clear ou resume : conversation vidée côté serveur et transcript-reset diffusé', async () => {
   for (const reason of ['clear', 'resume']) {
     const m = new SessionManager(echoer);
@@ -260,7 +335,11 @@ test('subscribeAll : liste à l\'abonnement (projets sans session = stopped), pu
   const a = last().find((x) => x.project === 'a');
   assert.equal(a.state, 'running');
   assert.equal(a.activity, 'Bash ls');
-  assert.deepEqual(Object.keys(a).sort(), ['activity', 'branch', 'excerpt', 'project', 'since', 'state']);
+  assert.deepEqual(Object.keys(a).sort(), ['activity', 'branch', 'excerpt', 'id', 'key', 'label', 'mode', 'project', 'since', 'state']);
+  assert.equal(a.key, s.id);
+  assert.equal(a.id, s.id);
+  assert.equal(last().find((x) => x.project === 'b').key, 'p:b');
+  assert.equal(last().find((x) => x.project === 'b').id, null);
   const n = lists.length;
   unsub();
   s.applyHook({ hook_event_name: 'Stop', last_assistant_message: 'fini' });
@@ -321,18 +400,44 @@ test('reprise : l\'id de reprise est refusé s\'il n\'est pas un UUID', () => {
   assert.equal(m.sessions.size, 0);
 });
 
-test('restart : tue la session vivante du projet et en démarre une autre (reprise)', async () => {
+test('summaries : une carte par session (vivante ou sortie), stopped seulement pour un projet sans session', async () => {
+  const m = new SessionManager(echoer);
+  const pa = { name: 'a', path: process.cwd() };
+  const pb = { name: 'b', path: process.cwd() };
+  const w = m.start(pa, 80, 24, { label: 'code' });
+  const c = m.start(pa, 80, 24, { mode: 'consult' });
+  let sums = m.summaries([pa, pb]);
+  assert.deepEqual(sums.map((x) => [x.key, x.project, x.mode, x.label, x.state]), [
+    [w.id, 'a', 'write', 'code', 'idle'],
+    [c.id, 'a', 'consult', '', 'idle'],
+    ['p:b', 'b', null, '', 'stopped'],
+  ]);
+  w.write('q');
+  await until(() => w.exited);
+  sums = m.summaries([pa, pb]);
+  assert.equal(sums.find((x) => x.key === w.id).state, 'error', 'une session sortie reste visible jusqu\'à close');
+  m.close(w.id);
+  m.close(c.id);
+  sums = m.summaries([pa, pb]);
+  assert.deepEqual(sums.map((x) => x.key), ['p:a', 'p:b']);
+  m.killAll();
+});
+
+test('summaries : une session dont le projet a quitté la config n\'est pas listée', () => {
+  const m = new SessionManager(echoer);
+  m.start({ name: 'parti', path: process.cwd() }, 80, 24);
+  assert.deepEqual(m.summaries([{ name: 'a', path: process.cwd() }]).map((x) => x.key), ['p:a']);
+  m.killAll();
+});
+
+test('close notifie le flux global', () => {
   const m = new SessionManager(echoer);
   const p = { name: 'p', path: process.cwd() };
-  const a = m.start(p, 80, 24);
-  const b = m.restart(p, 80, 24, { resume: RID });
-  assert.notEqual(a, b);
-  assert.equal(m.sessions.get('p'), b);
-  assert.equal(b.claudeId, RID);
-  assert.equal(m.byId(a.id), null);
-  await until(() => a.exited);
-  assert.equal(m.sessions.get('p'), b, 'la mort de l\'ancienne ne touche pas la nouvelle');
-  m.killAll();
+  const lists = [];
+  m.subscribeAll((msg) => lists.push(msg), [p]);
+  const s = m.start(p, 80, 24);
+  m.close(s.id);
+  assert.deepEqual(lists.at(-1).sessions.map((x) => x.key), ['p:p']);
 });
 
 test('historique rejoué (reprise) : une ancienne interruption ne repasse pas un tour en cours à idle', async () => {

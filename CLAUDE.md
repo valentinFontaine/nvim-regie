@@ -83,7 +83,7 @@ Une étape à la fois, en mode Plan pour chacune, testée avant de passer à la 
 4. Hooks HTTP et machine à états. ✅ Fait et validé à la main (voir `docs/etape4.md`).
 5. Tableau de bord multi-sessions et reprise de session. ✅ Fait et validé à la main (voir `docs/etape5.md`, `docs/etape5b.md`).
 6. Confort d'usage (voir `docs/etape6.md`).
-7. Sessions multiples par dossier, puis chantiers en worktrees (D17).
+7. Sessions multiples par dossier, puis chantiers en worktrees (D17). Lot A ✅ fait et validé à la main (voir `docs/etape7.md`) ; lots B (worktrees) et C à faire.
 8. Le reste selon les décisions ci-dessous.
 
 ## Projets similaires et ce qu'on en retient

@@ -186,7 +186,7 @@ test('WS : message read fait passer done_unread à idle', async () => {
   assert.equal(s.snap.state, 'done_unread');
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { cookie: await cookie(), origin: `http://127.0.0.1:${PORT}` } });
   await new Promise((r) => ws.on('open', r));
-  ws.send(JSON.stringify({ type: 'start', project: 'demo', cols: 80, rows: 24 }));
+  ws.send(JSON.stringify({ type: 'attach', id: s.id, cols: 80, rows: 24 }));
   ws.send(JSON.stringify({ type: 'read' }));
   const t = Date.now();
   while (s.snap.state !== 'idle' && Date.now() - t < 5000) await new Promise((r) => setTimeout(r, 50));
@@ -207,7 +207,7 @@ test('WS : message interrupt accepté ; aucun effet sans session', async () => {
   await new Promise((r) => setTimeout(r, 150));
   assert.equal(writes, 0);
   assert.equal(msgs.some((m) => m.type === 'error'), false);
-  ws.send(JSON.stringify({ type: 'start', project: 'demo', cols: 80, rows: 24 }));
+  ws.send(JSON.stringify({ type: 'attach', id: s.id, cols: 80, rows: 24 }));
   ws.send(JSON.stringify({ type: 'interrupt' }));
   const t = Date.now();
   while (writes === 0 && Date.now() - t < 3000) await new Promise((r) => setTimeout(r, 30));
@@ -232,12 +232,12 @@ test('WS : le flux global des sessions arrive dès la connexion (sans start) et 
   const { ws, msgs } = await openCollect();
   await waitFor(() => msgs.some((m) => m.type === 'sessions'));
   const first = msgs.find((m) => m.type === 'sessions');
-  assert.equal(first.sessions.length, 1);
-  assert.equal(first.sessions[0].project, 'demo');
+  assert.ok(first.sessions.length >= 1);
+  assert.ok(first.sessions.every((x) => x.project === 'demo'));
   assert.ok(!msgs.some((m) => m.type === 'data' || m.type === 'state'), 'rien de la session sans start');
   const s = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24);
   s.applyHook({ hook_event_name: 'Notification', notification_type: 'permission_prompt' });
-  await waitFor(() => msgs.some((m) => m.type === 'sessions' && m.sessions[0].state === 'needs_you'));
+  await waitFor(() => msgs.some((m) => m.type === 'sessions' && m.sessions.find((x) => x.key === s.id)?.state === 'needs_you'));
   s.applyHook({ hook_event_name: 'UserPromptSubmit' });
   ws.close();
 });
@@ -247,7 +247,7 @@ test('WS : detach arrête les messages de la session et neutralise read', async 
   s.applyHook({ hook_event_name: 'Stop' });
   assert.equal(s.snap.state, 'done_unread');
   const { ws, msgs } = await openCollect();
-  ws.send(JSON.stringify({ type: 'start', project: 'demo', cols: 80, rows: 24 }));
+  ws.send(JSON.stringify({ type: 'attach', id: s.id, cols: 80, rows: 24 }));
   await waitFor(() => msgs.some((m) => m.type === 'state'));
   ws.send(JSON.stringify({ type: 'detach' }));
   ws.send(JSON.stringify({ type: 'read' }));
@@ -256,7 +256,7 @@ test('WS : detach arrête les messages de la session et neutralise read', async 
   assert.equal(s.snap.state, 'done_unread');
   const n = msgs.filter((m) => m.type === 'state').length;
   s.applyHook({ hook_event_name: 'UserPromptSubmit' });
-  await waitFor(() => msgs.some((m) => m.type === 'sessions' && m.sessions[0].state === 'running'));
+  await waitFor(() => msgs.some((m) => m.type === 'sessions' && m.sessions.find((x) => x.key === s.id)?.state === 'running'));
   assert.equal(msgs.filter((m) => m.type === 'state').length, n, 'plus de message de session après detach');
   ws.close();
 });
@@ -270,24 +270,97 @@ test('WS : list-sessions renvoie les sessions passées du projet (hors liste : e
   await waitFor(() => msgs.some((m) => m.type === 'past-sessions'));
   const r = msgs.find((m) => m.type === 'past-sessions');
   assert.equal(r.project, 'demo');
-  assert.deepEqual(r.sessions, [{ id: PAST_ID, title: 'Titre passé', mtime: 1, size: 2 }]);
+  assert.deepEqual(r.sessions, [{ id: PAST_ID, title: 'Titre passé', mtime: 1, size: 2, open: null }]);
   assert.ok(msgs.some((m) => m.type === 'error'));
   ws.close();
 });
 
-test('WS : resume valide l\'id contre le listing du projet, remplace la session vivante et s\'y rattache', async () => {
-  const old = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24);
+const closeAll = () => { for (const id of [...sessions.sessions.keys()]) sessions.close(id); };
+
+test('WS : start crée une nouvelle session (mode, étiquette), répond started et s\'y abonne', async () => {
+  closeAll();
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'start', project: 'demo', mode: 'write', label: 'code', cols: 80, rows: 24 }));
+  ws.send(JSON.stringify({ type: 'start', project: 'demo', mode: 'consult', cols: 80, rows: 24 }));
+  await waitFor(() => msgs.filter((m) => m.type === 'started').length === 2);
+  const [a, b] = msgs.filter((m) => m.type === 'started').map((m) => sessions.get(m.id));
+  assert.notEqual(a, b);
+  assert.deepEqual([a.mode, a.label, b.mode, b.label], ['write', 'code', 'consult', '']);
+  ws.send(JSON.stringify({ type: 'start', project: 'demo', mode: 'root', cols: 80, rows: 24 }));
+  ws.send(JSON.stringify({ type: 'start', project: 'demo', label: '<script>', cols: 80, rows: 24 }));
+  await waitFor(() => msgs.filter((m) => m.type === 'error').length >= 2);
+  assert.equal(sessions.sessions.size, 2, 'mode ou étiquette invalide : rien ne démarre');
+  ws.close();
+  closeAll();
+});
+
+test('WS : attach sur un id inconnu ou invalide → erreur', async () => {
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'attach', id: '00000000-0000-4000-8000-000000000000', cols: 80, rows: 24 }));
+  ws.send(JSON.stringify({ type: 'attach', id: 42, cols: 80, rows: 24 }));
+  await waitFor(() => msgs.filter((m) => m.type === 'error').length >= 2);
+  ws.close();
+});
+
+test('WS : resume valide l\'id contre le listing du projet, crée une session et s\'y rattache', async () => {
+  closeAll();
   const { ws, msgs } = await openCollect();
   for (const bad of ['../../x', '00000000-0000-4000-8000-000000000000', 42, undefined]) {
     ws.send(JSON.stringify({ type: 'resume', project: 'demo', id: bad, cols: 80, rows: 24 }));
   }
   ws.send(JSON.stringify({ type: 'resume', project: 'inconnu', id: PAST_ID, cols: 80, rows: 24 }));
   await waitFor(() => msgs.filter((m) => m.type === 'error').length >= 5);
-  assert.equal(sessions.sessions.get('demo'), old, 'rien n\'est remplacé par une demande invalide');
-  ws.send(JSON.stringify({ type: 'resume', project: 'demo', id: PAST_ID, cols: 80, rows: 24 }));
-  await waitFor(() => sessions.sessions.get('demo') !== old);
-  const fresh = sessions.sessions.get('demo');
+  assert.equal(sessions.sessions.size, 0, 'rien ne démarre sur une demande invalide');
+  ws.send(JSON.stringify({ type: 'resume', project: 'demo', id: PAST_ID, mode: 'consult', label: 'relu', cols: 80, rows: 24 }));
+  await waitFor(() => msgs.some((m) => m.type === 'started'));
+  const fresh = sessions.get(msgs.find((m) => m.type === 'started').id);
   assert.equal(fresh.claudeId, PAST_ID);
+  assert.deepEqual([fresh.mode, fresh.label], ['consult', 'relu']);
   await waitFor(() => msgs.some((m) => m.type === 'data' && m.data.includes('READY')));
+  ws.close();
+});
+
+test('WS : resume d\'une session déjà ouverte ne relance rien et renvoie son id', async () => {
+  const open = sessions.byClaudeId(PAST_ID) ?? sessions.start({ name: 'demo', path: process.cwd() }, 80, 24, { resume: PAST_ID });
+  const n = sessions.sessions.size;
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'resume', project: 'demo', id: PAST_ID, cols: 80, rows: 24 }));
+  await waitFor(() => msgs.some((m) => m.type === 'started'));
+  assert.equal(msgs.find((m) => m.type === 'started').id, open.id);
+  assert.equal(sessions.sessions.size, n);
+  ws.send(JSON.stringify({ type: 'list-sessions', project: 'demo' }));
+  await waitFor(() => msgs.some((m) => m.type === 'past-sessions'));
+  assert.equal(msgs.find((m) => m.type === 'past-sessions').sessions[0].open, open.id);
+  ws.close();
+  closeAll();
+});
+
+test('WS : resume avec replace ferme la session remplacée (même projet seulement)', async () => {
+  closeAll();
+  const old = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24, { label: 'vieux' });
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'resume', project: 'demo', id: PAST_ID, replace: 'pas-un-id', cols: 80, rows: 24 }));
+  await waitFor(() => msgs.some((m) => m.type === 'error'));
+  assert.equal(sessions.get(old.id), old);
+  ws.send(JSON.stringify({ type: 'resume', project: 'demo', id: PAST_ID, replace: old.id, cols: 80, rows: 24 }));
+  await waitFor(() => msgs.some((m) => m.type === 'started'));
+  assert.equal(sessions.get(old.id), null);
+  await waitFor(() => old.exited);
+  const fresh = sessions.get(msgs.find((m) => m.type === 'started').id);
+  assert.equal(fresh.claudeId, PAST_ID);
+  assert.equal(fresh.label, 'vieux', 'le remplacement garde mode et étiquette si non précisés');
+  ws.close();
+  closeAll();
+});
+
+test('WS : close ferme une session ; id inconnu → erreur', async () => {
+  const s = sessions.start({ name: 'demo', path: process.cwd() }, 80, 24);
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'attach', id: s.id, cols: 80, rows: 24 }));
+  ws.send(JSON.stringify({ type: 'close', id: s.id }));
+  await waitFor(() => sessions.get(s.id) === null);
+  await waitFor(() => msgs.some((m) => m.type === 'sessions' && !m.sessions.some((x) => x.key === s.id)));
+  ws.send(JSON.stringify({ type: 'close', id: s.id }));
+  await waitFor(() => msgs.some((m) => m.type === 'error'));
   ws.close();
 });
