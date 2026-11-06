@@ -71,6 +71,7 @@ export class Session {
     this.label = cleanLabel(label);
     this.mode = mode;
     this.project = project;
+    this.chantier = project.chantier ?? null;
     this.spec = spec;
     this.onChange = onChange;
     this.id = randomUUID();
@@ -324,25 +325,45 @@ export class SessionManager {
    */
   summaries(projects = []) {
     const list = [];
+    const card = (s, p, chantier, branch) => ({
+      key: s.id, id: s.id, project: p.name, chantier, branch, mode: s.mode, label: s.label,
+      state: s.snap.state, activity: s.snap.activity, since: s.since, excerpt: s.excerpt,
+    });
+    const stopped = (key, p, chantier, branch) => ({
+      key, id: null, project: p.name, chantier, branch, mode: null, label: '',
+      state: 'stopped', activity: '', since: null, excerpt: '',
+    });
     for (const p of projects) {
+      const mine = [...this.sessions.values()].filter((s) => s.project.name === p.name);
+      const main = mine.filter((s) => s.chantier === null);
       const branch = readBranch(p.path);
-      let any = false;
-      for (const s of this.sessions.values()) {
-        if (s.project.name !== p.name) continue;
-        any = true;
-        list.push({
-          key: s.id, id: s.id, project: p.name, branch, mode: s.mode, label: s.label,
-          state: s.snap.state, activity: s.snap.activity, since: s.since, excerpt: s.excerpt,
-        });
+      if (main.length) for (const s of main) list.push(card(s, p, null, branch));
+      else list.push(stopped(`p:${p.name}`, p, null, branch));
+      const listed = this.spec.listChantiers ? this.spec.listChantiers(p) : [];
+      for (const c of listed) {
+        const here = mine.filter((s) => s.chantier === c.name);
+        if (here.length) for (const s of here) list.push(card(s, p, c.name, c.branch));
+        else list.push(stopped(`c:${p.name}/${c.name}`, p, c.name, c.branch));
       }
-      if (!any) {
-        list.push({
-          key: `p:${p.name}`, id: null, project: p.name, branch, mode: null, label: '',
-          state: 'stopped', activity: '', since: null, excerpt: '',
-        });
+      const known = new Set(listed.map((c) => c.name));
+      for (const s of mine) {
+        if (s.chantier !== null && !known.has(s.chantier)) list.push(card(s, p, s.chantier, readBranch(s.project.path)));
       }
     }
     return list;
+  }
+
+  /** Une session non sortie existe-t-elle dans ce lieu (chantier null = dossier principal) ? */
+  liveIn(projectName, chantier = null) {
+    for (const s of this.sessions.values()) {
+      if (!s.exited && s.project.name === projectName && s.chantier === (chantier ?? null)) return true;
+    }
+    return false;
+  }
+
+  /** Renotifie le flux global (la liste des chantiers a changé hors des sessions). */
+  refresh() {
+    this.#notify();
   }
 
   /** Flux global : fn reçoit {type:'sessions', sessions} tout de suite puis à chaque changement. */

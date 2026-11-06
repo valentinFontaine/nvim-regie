@@ -335,7 +335,7 @@ test('subscribeAll : liste à l\'abonnement (projets sans session = stopped), pu
   const a = last().find((x) => x.project === 'a');
   assert.equal(a.state, 'running');
   assert.equal(a.activity, 'Bash ls');
-  assert.deepEqual(Object.keys(a).sort(), ['activity', 'branch', 'excerpt', 'id', 'key', 'label', 'mode', 'project', 'since', 'state']);
+  assert.deepEqual(Object.keys(a).sort(), ['activity', 'branch', 'chantier', 'excerpt', 'id', 'key', 'label', 'mode', 'project', 'since', 'state']);
   assert.equal(a.key, s.id);
   assert.equal(a.id, s.id);
   assert.equal(last().find((x) => x.project === 'b').key, 'p:b');
@@ -428,6 +428,45 @@ test('summaries : une session dont le projet a quitté la config n\'est pas list
   m.start({ name: 'parti', path: process.cwd() }, 80, 24);
   assert.deepEqual(m.summaries([{ name: 'a', path: process.cwd() }]).map((x) => x.key), ['p:a']);
   m.killAll();
+});
+
+test('summaries : chantiers listés, sessions rangées dans leur lieu, stopped par lieu vide', () => {
+  const cwd = process.cwd();
+  const pa = { name: 'a', path: cwd };
+  const m = new SessionManager({
+    ...echoer,
+    listChantiers: (p) => (p.name === 'a'
+      ? [{ name: 'x', path: cwd, branch: 'x' }, { name: 'y', path: cwd, branch: 'br-y' }] : []),
+  });
+  const s = m.start({ name: 'a', path: cwd, chantier: 'x' }, 80, 24);
+  assert.equal(s.chantier, 'x');
+  let sums = m.summaries([pa]);
+  assert.deepEqual(sums.map((c) => [c.key, c.project, c.chantier, c.state, c.branch]), [
+    ['p:a', 'a', null, 'stopped', sums[0].branch],
+    [s.id, 'a', 'x', 'idle', 'x'],
+    ['c:a/y', 'a', 'y', 'stopped', 'br-y'],
+  ]);
+  // Session principale : chantier null.
+  const main = m.start(pa, 80, 24);
+  assert.equal(main.chantier, null);
+  // Chantier disparu de la liste (retiré à la main) : sa session vivante reste visible.
+  const z = m.start({ name: 'a', path: cwd, chantier: 'z' }, 80, 24);
+  sums = m.summaries([pa]);
+  assert.deepEqual(sums.map((c) => [c.key, c.chantier]), [
+    [main.id, null], [s.id, 'x'], ['c:a/y', 'y'], [z.id, 'z'],
+  ]);
+  assert.equal(m.liveIn('a', 'x'), true);
+  assert.equal(m.liveIn('a', 'y'), false);
+  assert.equal(m.liveIn('a', null), true);
+  assert.equal(m.liveIn('b', 'x'), false);
+  m.close(main.id);
+  assert.equal(m.liveIn('a', null), false);
+  m.killAll();
+});
+
+test('summaries : sans listChantiers dans la spec, aucun chantier', () => {
+  const m = new SessionManager(echoer);
+  assert.deepEqual(m.summaries([{ name: 'a', path: process.cwd() }]).map((c) => [c.key, c.chantier]), [['p:a', null]]);
 });
 
 test('close notifie le flux global', () => {

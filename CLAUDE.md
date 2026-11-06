@@ -83,7 +83,7 @@ Une étape à la fois, en mode Plan pour chacune, testée avant de passer à la 
 4. Hooks HTTP et machine à états. ✅ Fait et validé à la main (voir `docs/etape4.md`).
 5. Tableau de bord multi-sessions et reprise de session. ✅ Fait et validé à la main (voir `docs/etape5.md`, `docs/etape5b.md`).
 6. Confort d'usage (voir `docs/etape6.md`).
-7. Sessions multiples par dossier, puis chantiers en worktrees (D17). Lot A ✅ fait et validé à la main (voir `docs/etape7.md`) ; lots B (worktrees) et C à faire.
+7. Sessions multiples par dossier, puis chantiers en worktrees (D17). Lot A ✅ fait et validé à la main ; lot B fait, validation à la main en attente (voir `docs/etape7.md`) ; lot C à faire.
 8. Le reste selon les décisions ci-dessous.
 
 ## Projets similaires et ce qu'on en retient
@@ -115,7 +115,7 @@ Notre différence : aucun de ces projets ne fait de Neovim la zone de saisie, av
 - **D17. Plusieurs sessions par dossier, chantiers en worktrees (étape 7).** ✅ Décidé (2026-11-06) :
   - Hiérarchie : Projet > Chantier (branche + worktree) > Sessions. Les sessions sont indexées par UUID, plus par projet.
   - Lot A : « + Session » dans un dossier déjà occupé, en mode *Consultation* (`--permission-mode plan`, lecture seule) ou *Écrivain* (avertissement si un écrivain existe déjà : chacun ne committe que ses fichiers). Étiquette libre optionnelle (« base », « code ») affichée sur la carte. Onglets des sessions sœurs dans la vue session.
-  - Lot B : un chantier = un nom choisi par l'utilisateur, validé strictement, qui donne la branche et le worktree (`claude -w`). Le dossier principal reste sur `main` et sert aux fusions et suppressions.
+  - Lot B : un chantier = un nom choisi par l'utilisateur, validé strictement, qui donne la branche (nom exact) et le worktree `<projet>/.claude/worktrees/<nom>`, créé par `git worktree add -b <nom> <chemin> HEAD` (**révisé le 2026-11-06** : plus `claude -w`, qui imposait la branche `worktree-<nom>` ; `.claude/worktrees/` va dans `.git/info/exclude`). Le dossier principal reste sur `main` et sert aux fusions et suppressions. Clôture seulement si aucune session vivante, worktree propre et branche fusionnée (`worktree remove` puis `branch -d`, jamais `--force`).
   - Lot C : la carte d'un chantier affiche la note `chantiers\<branche>.md` si elle existe (lecture seule ; la régie ne déplace jamais les notes).
   - Raison : deux tâches couplées (code + base) partagent un worktree ; deux tâches indépendantes et longues prennent chacune le leur. Une branche sans worktree n'isole rien.
   - Vérifié sur 2.1.319 : `claude -w <nom>` crée `<projet>/.claude/worktrees/<nom>` sur la branche `worktree-<nom>` ; le JSONL va dans le dossier encodé du worktree ; le worktree reste `locked` après la sortie de `claude` ; `.claude/` apparaît non suivi dans le dépôt principal. Nettoyage à notre charge.

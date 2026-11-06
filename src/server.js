@@ -8,6 +8,7 @@ import { loadConfig } from './config.js';
 import { SessionManager, claudeArgs } from './session.js';
 import { findTranscript, defaultProjectsRoot, acceptTranscript } from './transcript.js';
 import { listPastSessions } from './sessions-list.js';
+import { listChantiers, createChantier, removeChantier, cleanChantierName } from './chantiers.js';
 import {
   COOKIE_NAME, createToken, tokenMatches, parseCookies, originAllowed, hostAllowed,
 } from './security.js';
@@ -95,7 +96,11 @@ const SECURITY_HEADERS = {
   'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:*",
 };
 
-export function createApp({ config, token, sessions, pastSessions = (project) => listPastSessions(defaultProjectsRoot(), project.path) }) {
+export function createApp({
+  config, token, sessions,
+  pastSessions = (project) => listPastSessions(defaultProjectsRoot(), project.path),
+  chantiers = { list: listChantiers, create: createChantier, remove: removeChantier },
+}) {
   const { port } = config;
   const server = http.createServer((req, res) => {
     const send = (status, body, extra = {}) => {
@@ -208,6 +213,16 @@ export function createApp({ config, token, sessions, pastSessions = (project) =>
       try { msg = JSON.parse(String(raw)); } catch { return reply({ type: 'error', message: 'JSON invalide' }); }
       if (!msg || typeof msg !== 'object') return reply({ type: 'error', message: 'message invalide' });
       const findProject = () => config.projects.find((p) => p.name === msg.project);
+      // Lieu = projet de la config + chantier listé par le serveur : jamais un chemin reçu du client.
+      const findPlace = () => {
+        const project = findProject();
+        if (!project) return { error: 'projet inconnu' };
+        if (msg.chantier === undefined || msg.chantier === null) return { place: { ...project, chantier: null } };
+        if (typeof msg.chantier !== 'string') return { error: 'chantier inconnu' };
+        const c = chantiers.list(project).find((x) => x.name === msg.chantier);
+        if (!c) return { error: 'chantier inconnu' };
+        return { place: { name: project.name, path: c.path, chantier: c.name } };
+      };
       const attach = (s) => {
         if (unsub) unsub();
         session = s;
@@ -215,9 +230,9 @@ export function createApp({ config, token, sessions, pastSessions = (project) =>
       };
       try {
         if (msg.type === 'start') {
-          const project = findProject();
-          if (!project) return reply({ type: 'error', message: 'projet inconnu' });
-          const s = sessions.start(project, msg.cols, msg.rows, { mode: msg.mode ?? 'write', label: msg.label });
+          const { place, error } = findPlace();
+          if (error) return reply({ type: 'error', message: error });
+          const s = sessions.start(place, msg.cols, msg.rows, { mode: msg.mode ?? 'write', label: msg.label });
           reply({ type: 'started', id: s.id });
           attach(s);
         } else if (msg.type === 'attach') {
@@ -225,22 +240,22 @@ export function createApp({ config, token, sessions, pastSessions = (project) =>
           if (!s) return reply({ type: 'error', message: 'session inconnue' });
           attach(s);
         } else if (msg.type === 'list-sessions') {
-          const project = findProject();
-          if (!project) return reply({ type: 'error', message: 'projet inconnu' });
-          const list = pastSessions(project).map((x) => ({ ...x, open: sessions.byClaudeId(x.id)?.id ?? null }));
-          reply({ type: 'past-sessions', project: project.name, sessions: list });
+          const { place, error } = findPlace();
+          if (error) return reply({ type: 'error', message: error });
+          const list = pastSessions(place).map((x) => ({ ...x, open: sessions.byClaudeId(x.id)?.id ?? null }));
+          reply({ type: 'past-sessions', project: place.name, chantier: place.chantier, sessions: list });
         } else if (msg.type === 'resume') {
           // Reprise : l'id doit figurer dans le listing du projet (donc être un fichier de ce projet).
-          const project = findProject();
-          if (!project) return reply({ type: 'error', message: 'projet inconnu' });
-          if (typeof msg.id !== 'string' || !pastSessions(project).some((x) => x.id === msg.id.toLowerCase())) {
+          const { place, error } = findPlace();
+          if (error) return reply({ type: 'error', message: error });
+          if (typeof msg.id !== 'string' || !pastSessions(place).some((x) => x.id === msg.id.toLowerCase())) {
             return reply({ type: 'error', message: 'session inconnue' });
           }
           // `replace` : la session affichée, du même projet, est fermée et remplacée (bouton « Reprendre… »).
           let old = null;
           if (msg.replace !== undefined) {
             old = sessions.get(msg.replace);
-            if (!old || old.project.name !== project.name) return reply({ type: 'error', message: 'session à remplacer inconnue' });
+            if (!old || old.project.name !== place.name || old.chantier !== place.chantier) return reply({ type: 'error', message: 'session à remplacer inconnue' });
           }
           // Jamais deux claude sur le même JSONL : on rouvre celle qui le suit déjà.
           const open = sessions.byClaudeId(msg.id);
@@ -253,9 +268,32 @@ export function createApp({ config, token, sessions, pastSessions = (project) =>
             if (unsub && session === old) { unsub(); unsub = null; session = null; }
             sessions.close(old.id);
           }
-          const s = sessions.start(project, msg.cols, msg.rows, opts);
+          const s = sessions.start(place, msg.cols, msg.rows, opts);
           reply({ type: 'started', id: s.id });
           attach(s);
+        } else if (msg.type === 'create-chantier') {
+          const project = findProject();
+          if (!project) return reply({ type: 'error', message: 'projet inconnu' });
+          const name = cleanChantierName(msg.name);
+          Promise.resolve()
+            .then(() => chantiers.create(project, name))
+            .then(() => {
+              reply({ type: 'chantier-created', project: project.name, chantier: name });
+              sessions.refresh();
+            })
+            .catch((e) => reply({ type: 'error', message: e.message }));
+        } else if (msg.type === 'remove-chantier') {
+          const project = findProject();
+          if (!project) return reply({ type: 'error', message: 'projet inconnu' });
+          const c = typeof msg.chantier === 'string' ? chantiers.list(project).find((x) => x.name === msg.chantier) : null;
+          if (!c) return reply({ type: 'error', message: 'chantier inconnu' });
+          Promise.resolve()
+            .then(() => chantiers.remove(project, c.name, { hasLiveSession: sessions.liveIn(project.name, c.name) }))
+            .then(() => {
+              reply({ type: 'chantier-removed', project: project.name, chantier: c.name });
+              sessions.refresh();
+            })
+            .catch((e) => reply({ type: 'error', message: e.message }));
         } else if (msg.type === 'close') {
           if (session && session.id === msg.id) { if (unsub) unsub(); unsub = null; session = null; }
           if (!sessions.close(msg.id)) reply({ type: 'error', message: 'session inconnue' });
@@ -319,6 +357,7 @@ async function main() {
     command: claude,
     args: (id, resume, mode) => claudeArgs(id, resume, mode, hooksSettings(config.port, token, id)),
     nvim: { path: config.nvimPath, lua: path.join(ROOT, 'nvim', 'regie.lua'), sendKey: config.sendKey },
+    listChantiers,
     transcript: {
       resolve: (project, id) => findTranscript(defaultProjectsRoot(), project.path, id),
       // Un transcript_path reçu d'un hook n'est suivi que s'il est un .jsonl sous la racine des projets.

@@ -2,8 +2,38 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   columnOf, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, COLUMNS, formatAgo,
-  formatTurnDuration, turnLine, writersIn, sessionName, pastSessionAction,
+  formatTurnDuration, turnLine, writersIn, sessionName, pastSessionAction, parseRoute, cardHref, placeTitle,
 } from '../public/dashboard.js';
+
+test('parseRoute : session, projet, chantier ; tout le reste → tableau de bord', () => {
+  assert.deepEqual(parseRoute('#/s/abc'), { view: 'session', id: 'abc' });
+  assert.deepEqual(parseRoute('#/p/mon%20projet'), { view: 'place', project: 'mon projet', chantier: null });
+  assert.deepEqual(parseRoute('#/p/demo/essai-b'), { view: 'place', project: 'demo', chantier: 'essai-b' });
+  for (const h of ['', '#/', '#/x/y', '#/p/', '#/p/a/b/c', '#/p/%E0%A4%A', '#/s/']) {
+    assert.deepEqual(parseRoute(h), { view: 'dash' }, h);
+  }
+});
+
+test('cardHref : session vivante, lieu principal ou chantier sans session', () => {
+  assert.equal(cardHref({ id: 'u-1', project: 'p', chantier: 'x' }), '#/s/u-1');
+  assert.equal(cardHref({ id: null, project: 'mon projet', chantier: null }), '#/p/mon%20projet');
+  assert.equal(cardHref({ id: null, project: 'p', chantier: 'essai' }), '#/p/p/essai');
+});
+
+test('placeTitle : « projet » ou « projet › chantier »', () => {
+  assert.equal(placeTitle({ project: 'p', chantier: null }), 'p');
+  assert.equal(placeTitle({ project: 'p' }), 'p');
+  assert.equal(placeTitle({ project: 'p', chantier: 'essai' }), 'p › essai');
+});
+
+test('writersIn : par lieu (dossier principal et chantier séparés)', () => {
+  const card = (key, chantier, mode = 'write', state = 'idle') => ({ key, id: key, project: 'p', chantier, mode, state });
+  const cards = [card('a', null), card('b', 'x'), card('c', 'x'), card('d', 'x', 'consult')];
+  assert.equal(writersIn(cards, 'p', null), 1);
+  assert.equal(writersIn(cards, 'p', 'x'), 2);
+  assert.equal(writersIn(cards, 'p', 'y'), 0);
+  assert.equal(writersIn(cards, 'p'), 1, 'chantier omis = dossier principal');
+});
 
 test('formatTurnDuration : secondes, minutes et secondes, heures', () => {
   assert.equal(formatTurnDuration(11_400), '11 s');

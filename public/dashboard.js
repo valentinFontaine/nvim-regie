@@ -22,10 +22,35 @@ const byAge = (a, b) => {
   return String(a.project).localeCompare(String(b.project)) || String(a.key).localeCompare(String(b.key));
 };
 
-/** Sessions « écrivain » encore vivantes dans le dossier du projet (pour l'avertissement). */
-export function writersIn(cards, project) {
-  return cards.filter((c) => c.project === project && c.mode === 'write' && c.state !== 'error' && c.state !== 'stopped').length;
+/** Sessions « écrivain » encore vivantes dans un lieu (dossier principal si chantier omis), pour l'avertissement. */
+export function writersIn(cards, project, chantier = null) {
+  return cards.filter((c) => c.project === project && (c.chantier ?? null) === chantier
+    && c.mode === 'write' && c.state !== 'error' && c.state !== 'stopped').length;
 }
+
+/** Route du hash : '#/s/<id>' (session), '#/p/<projet>[/<chantier>]' (lieu sans session), sinon tableau de bord. */
+export function parseRoute(hash) {
+  const dash = { view: 'dash' };
+  if (typeof hash !== 'string') return dash;
+  const parts = hash.split('/');
+  if (parts[0] !== '#') return dash;
+  try {
+    const seg = parts.slice(2).map(decodeURIComponent);
+    if (parts[1] === 's' && seg.length === 1 && seg[0]) return { view: 'session', id: seg[0] };
+    if (parts[1] === 'p' && seg.length >= 1 && seg.length <= 2 && seg.every(Boolean)) {
+      return { view: 'place', project: seg[0], chantier: seg[1] ?? null };
+    }
+  } catch { /* encodage invalide */ }
+  return dash;
+}
+
+/** Lien d'une carte : sa session si elle existe, sinon son lieu. */
+export function cardHref(c) {
+  if (c.id) return `#/s/${encodeURIComponent(c.id)}`;
+  return `#/p/${encodeURIComponent(c.project)}${c.chantier ? `/${encodeURIComponent(c.chantier)}` : ''}`;
+}
+
+export const placeTitle = (c) => (c.chantier ? `${c.project} › ${c.chantier}` : c.project);
 
 /** Nom court d'une session : son étiquette, sinon son mode. */
 export function sessionName(c) {

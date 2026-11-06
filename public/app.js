@@ -1,6 +1,9 @@
 import { renderMarkdown, toolTarget } from '/render.js';
 import { ansiSegments } from '/ansi.js';
-import { COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo, turnLine, writersIn, sessionName, pastSessionAction } from '/dashboard.js';
+import {
+  COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo, turnLine, writersIn, sessionName,
+  pastSessionAction, parseRoute, cardHref, placeTitle,
+} from '/dashboard.js';
 
 const status = document.getElementById('status');
 const conv = document.getElementById('conv');
@@ -56,6 +59,9 @@ let toolEls = new Map();  // toolUseId -> <details>
 let cards = [];           // dernier flux global reçu
 let seeded = false;       // la première liste reçue ne déclenche aucune notification
 let current = null;       // projet affiché dans la vue session (null = tableau de bord)
+let currentChantier = null; // chantier affiché (null = dossier principal du projet)
+let awaitPlace = null;    // chantier tout juste créé : on l'ouvre dès qu'il apparaît dans le flux global
+let chantierMsgEl = null; // ligne du sélecteur où s'affiche le refus de création ou de clôture
 let currentId = null;     // id de la session affichée (null : choix d'une nouvelle session ou reprise)
 let selected = null;      // key de la carte sélectionnée au clavier
 let pendingEl = null;     // prompt envoyé, pas encore lu dans le transcript
@@ -234,10 +240,10 @@ function displayOrder() {
   return COLUMNS.flatMap((c) => g[c.id]);
 }
 
-/** Session vivante : #/s/<id> ; projet sans session : #/p/<nom> (choix nouvelle / reprise). */
-function cardHref(c) {
-  return c.id ? `#/s/${encodeURIComponent(c.id)}` : `#/p/${encodeURIComponent(c.project)}`;
-}
+/** Carte du lieu affiché (même projet, même chantier). */
+const inCurrentPlace = (c) => c.project === current && (c.chantier ?? null) === currentChantier;
+const currentPlace = () => ({ id: null, project: current, chantier: currentChantier });
+
 function openCard(c) { location.hash = cardHref(c); }
 function openKey(key) {
   const c = cards.find((x) => x.key === key);
@@ -256,7 +262,7 @@ function makeCard(c) {
   a.tabIndex = 0;
   const head = el('div', 'head');
   const dur = el('span', 'dur');
-  head.append(el('span', 'proj', c.project));
+  head.append(el('span', 'proj', placeTitle(c)));
   const tag = tagFor(c);
   if (tag) head.append(tag);
   head.append(el('span', 'branch', c.branch ?? ''), dur);
@@ -293,9 +299,9 @@ function select(key) {
   }
 }
 
-/** Onglets des sessions sœurs (même dossier) dans la vue session. */
+/** Onglets des sessions sœurs (même lieu : dossier principal ou chantier) dans la vue session. */
 function renderTabs() {
-  const sibs = current === null ? [] : cards.filter((c) => c.project === current && c.id);
+  const sibs = current === null ? [] : cards.filter((c) => inCurrentPlace(c) && c.id);
   tabsEl.hidden = sibs.length === 0 || (sibs.length === 1 && sibs[0].id === currentId);
   tabsEl.replaceChildren(...sibs.map((c, i) => {
     const a = el('a', c.id === currentId ? 'on' : null);
@@ -344,10 +350,18 @@ function alertNeedsYou(card) {
   if ('Notification' in window && Notification.permission === 'granted') {
     try {
       const name = sessionName(card);
-      const n = new Notification(`${card.project}${name ? ` · ${name}` : ''} attend ta réponse`, { body: card.activity || 'Permission demandée' });
+      const n = new Notification(`${placeTitle(card)}${name ? ` · ${name}` : ''} attend ta réponse`, { body: card.activity || 'Permission demandée' });
       n.onclick = () => { window.focus(); openCard(card); n.close(); };
     } catch { /* ignoré */ }
   }
+}
+
+/** Chantier tout juste créé : ouvert dès que le flux global le connaît (l'ordre des deux messages n'est pas garanti). */
+function openAwaitedPlace() {
+  if (!awaitPlace || !cards.some((c) => c.project === awaitPlace.project && c.chantier === awaitPlace.chantier)) return;
+  const href = cardHref({ id: null, ...awaitPlace });
+  awaitPlace = null;
+  location.hash = href;
 }
 
 function onSessions(list) {
@@ -358,6 +372,7 @@ function onSessions(list) {
   }
   seeded = true;
   document.title = titleFor(titleCount(cards));
+  openAwaitedPlace();
   if (current === null) { renderDash(); return; }
   // Session affichée fermée ailleurs (autre onglet du navigateur) : retour au tableau de bord.
   if (currentId && !cards.some((c) => c.id === currentId)) { location.hash = '#/'; return; }
@@ -391,7 +406,7 @@ function openPicker() {
   conv.hidden = true;
   picker.hidden = false;
   picker.replaceChildren(el('p', 'empty', 'Chargement des sessions…'));
-  send({ type: 'list-sessions', project: current });
+  send({ type: 'list-sessions', project: current, chantier: currentChantier });
 }
 
 /** Mode et étiquette choisis dans le formulaire du sélecteur. */
@@ -413,16 +428,60 @@ function newForm() {
   const label = el('input');
   label.type = 'text'; label.name = 'label'; label.maxLength = 24; label.placeholder = 'étiquette (facultatif)';
   form.append(radio('write', 'Écrivain', true), radio('consult', 'Consultation (lecture seule)', false), label);
-  const writers = writersIn(cards, current);
+  const writers = writersIn(cards, current, currentChantier);
   const warn = el('p', 'warn', `${writers} écrivain${writers > 1 ? 's' : ''} déjà dans ce dossier : chacun ne committe que ses fichiers.`);
   warn.hidden = writers === 0;
   form.onchange = () => { warn.hidden = writers === 0 || pickerChoice().mode !== 'write'; };
   return [form, warn];
 }
 
+/** Dossier principal : créer un chantier (branche + worktree) depuis la branche courante. */
+function chantierCreateForm() {
+  const box = el('div', 'form chantier');
+  const base = cards.find((c) => c.project === current && (c.chantier ?? null) === null)?.branch ?? '?';
+  const name = el('input');
+  name.type = 'text'; name.name = 'chantier'; name.maxLength = 40; name.placeholder = 'nom-du-chantier';
+  name.pattern = '[a-z0-9]+(-[a-z0-9]+)*';
+  const go = el('button', 'opt', 'Créer le chantier');
+  const create = () => {
+    const v = name.value.trim();
+    if (!v) return;
+    chantierMsgEl.textContent = 'Création du worktree…';
+    chantierMsgEl.hidden = false;
+    send({ type: 'create-chantier', project: current, name: v });
+  };
+  go.onclick = create;
+  name.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); create(); } };
+  box.append(el('h3', null, `Nouveau chantier (depuis ${base})`), name, go);
+  const nodes = [box];
+  if (base !== 'main' && base !== 'master') {
+    nodes.push(el('p', 'warn', `Le dossier principal est sur « ${base} », pas sur main : le chantier partira de cette branche.`));
+  }
+  chantierMsgEl = el('p', 'warn');
+  chantierMsgEl.hidden = true;
+  nodes.push(chantierMsgEl);
+  return nodes;
+}
+
+/** Chantier : le clore (refusé par le serveur si session vivante, fichiers modifiés ou branche non fusionnée). */
+function chantierCloseForm() {
+  const b = el('button', 'opt danger', 'Clore le chantier');
+  b.onclick = () => {
+    if (!confirm(`Clore le chantier « ${currentChantier} » ? Le worktree et la branche seront supprimés `
+      + '(refusé s\'il reste une session, des fichiers modifiés ou une branche non fusionnée).')) return;
+    chantierMsgEl.textContent = 'Clôture…';
+    chantierMsgEl.hidden = false;
+    send({ type: 'remove-chantier', project: current, chantier: currentChantier });
+  };
+  chantierMsgEl = el('p', 'warn');
+  chantierMsgEl.hidden = true;
+  return [b, chantierMsgEl];
+}
+
 function renderPicker(list) {
   const replace = pickerMode === 'replace';
-  const nodes = [el('h2', null, replace ? 'Reprendre une session' : `Nouvelle session dans ${current}`)];
+  chantierMsgEl = null;
+  const nodes = [el('h2', null, replace ? 'Reprendre une session' : `Nouvelle session dans ${placeTitle(currentPlace())}`)];
   if (replace || pickerBack) {
     const cancel = el('button', 'opt', 'Annuler');
     cancel.onclick = () => {
@@ -436,6 +495,8 @@ function renderPicker(list) {
     const fresh = el('button', 'opt new', 'Nouvelle session');
     fresh.onclick = () => startNew();
     nodes.push(fresh);
+    nodes.push(...(currentChantier === null ? chantierCreateForm() : chantierCloseForm()));
+    nodes.push(el('h3', null, 'Reprendre une session passée'));
   }
   if (!list.length) nodes.push(el('p', 'empty', 'Aucune session passée pour ce projet.'));
   const now = Date.now();
@@ -461,12 +522,12 @@ function startNew() {
   const { mode, label } = pickerChoice();
   resetSessionView();
   closePicker();
-  send({ type: 'start', project: current, mode, label, cols: term.cols, rows: term.rows });
+  send({ type: 'start', project: current, chantier: currentChantier, mode, label, cols: term.cols, rows: term.rows });
   send({ type: 'nvim-resize', cols: nterm.cols, rows: nterm.rows });
 }
 
 function resumeSession(id) {
-  const msg = { type: 'resume', project: current, id, cols: term.cols, rows: term.rows };
+  const msg = { type: 'resume', project: current, chantier: currentChantier, id, cols: term.cols, rows: term.rows };
   if (pickerMode === 'replace') {
     const st = stateEl.dataset.state;
     if ((st === 'running' || st === 'needs_you')
@@ -493,7 +554,7 @@ function onStarted(id) {
 resumeBtn.onclick = () => { pickerMode = 'replace'; openPicker(); };
 addBtn.onclick = () => {
   pickerBack = currentId;
-  location.hash = `#/p/${encodeURIComponent(current)}`;
+  location.hash = cardHref(currentPlace());
 };
 closeBtn.onclick = () => {
   if (!currentId) return;
@@ -508,6 +569,7 @@ closeBtn.onclick = () => {
 
 function showDash() {
   if (current !== null) { send({ type: 'detach' }); current = null; }
+  currentChantier = null;
   currentId = null;
   pickerBack = null;
   sess.hidden = true;
@@ -524,9 +586,10 @@ function showDash() {
   renderDash();
 }
 
-function enterSessionView(project) {
+function enterSessionView(project, chantier) {
   if (current !== null) send({ type: 'detach' });
   current = project;
+  currentChantier = chantier ?? null;
   dash.hidden = true;
   sess.hidden = false;
   backLink.hidden = false;
@@ -536,7 +599,7 @@ function enterSessionView(project) {
   stateEl.hidden = false;
   stateEl.dataset.state = '';
   stateEl.textContent = '';
-  projName.textContent = project;
+  projName.textContent = placeTitle({ project, chantier: currentChantier });
   updateNotifButton();
   resetSessionView();
 }
@@ -544,7 +607,7 @@ function enterSessionView(project) {
 /** Vue d'une session vivante (ou sortie, tant qu'elle n'est pas fermée). */
 function showSession(card) {
   if (currentId === card.id) return;
-  enterSessionView(card.project);
+  enterSessionView(card.project, card.chantier);
   currentId = card.id;
   pickerBack = null;
   picker.hidden = true;
@@ -556,9 +619,9 @@ function showSession(card) {
   nterm.focus();
 }
 
-/** Projet sans session affichée : rien ne démarre avant le choix (nouvelle session ou reprise). */
-function showProject(project) {
-  enterSessionView(project);
+/** Lieu (dossier principal ou chantier) sans session affichée : rien ne démarre avant le choix. */
+function showPlace(project, chantier) {
+  enterSessionView(project, chantier);
   currentId = null;
   pickerMode = 'new';
   updateSessionButtons();
@@ -566,15 +629,12 @@ function showProject(project) {
 }
 
 function route() {
-  const m = /^#\/([sp])\/(.+)$/.exec(location.hash);
-  let v = null;
-  if (m) {
-    try { v = decodeURIComponent(m[2]); } catch { v = null; }
-  }
-  const card = m?.[1] === 's' ? cards.find((c) => c.id === v) : null;
+  const r = parseRoute(location.hash);
+  const card = r.view === 'session' ? cards.find((c) => c.id === r.id) : null;
   if (card) showSession(card);
-  else if (m?.[1] === 'p' && cards.some((c) => c.project === v)) showProject(v);
-  else showDash();
+  else if (r.view === 'place' && cards.some((c) => c.project === r.project && (c.chantier ?? null) === r.chantier)) {
+    showPlace(r.project, r.chantier);
+  } else showDash();
 }
 window.addEventListener('hashchange', route);
 
@@ -612,9 +672,13 @@ function connect() {
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'sessions') { onSessions(msg.sessions); if (current === null && /^#\/[sp]\//.test(location.hash)) route(); }
+    else if (msg.type === 'chantier-created') { awaitPlace = { project: msg.project, chantier: msg.chantier }; openAwaitedPlace(); }
+    else if (msg.type === 'chantier-removed') { if (msg.project === current && msg.chantier === currentChantier) location.hash = '#/'; }
     else if (current === null) return; // messages de session : seulement dans la vue session
     else if (msg.type === 'started') onStarted(msg.id);
-    else if (msg.type === 'past-sessions') { if (msg.project === current && !picker.hidden) renderPicker(msg.sessions); }
+    else if (msg.type === 'past-sessions') {
+      if (msg.project === current && (msg.chantier ?? null) === currentChantier && !picker.hidden) renderPicker(msg.sessions);
+    }
     else if (msg.type === 'data') term.write(msg.data);
     else if (msg.type === 'nvim-data') nterm.write(msg.data);
     else if (msg.type === 'nvim-exit') status.textContent = `nvim terminé (code ${msg.code})`;
@@ -626,6 +690,7 @@ function connect() {
     else if (msg.type === 'exit') status.textContent = `claude terminé (code ${msg.code})`;
     else if (msg.type === 'error') {
       status.textContent = `erreur : ${msg.message}`;
+      if (chantierMsgEl?.isConnected && !chantierMsgEl.hidden) chantierMsgEl.textContent = `Refusé : ${msg.message}`;
       if (currentId === null && picker.hidden) openPicker(); // démarrage refusé (étiquette invalide…) : retour au choix
     }
   };

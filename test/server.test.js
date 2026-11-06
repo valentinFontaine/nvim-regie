@@ -10,16 +10,41 @@ const token = 'a'.repeat(64);
 let app;
 let sessions;
 
+// Chantiers simulés : le vrai git est testé dans chantiers.test.js (jamais de worktree dans ce dépôt).
+const WT_PATH = process.cwd();
+const fakeWt = new Map([['x', { name: 'x', path: WT_PATH, branch: 'x' }]]);
+const chantierCalls = [];
+const pastCalls = [];
+const chantiers = {
+  list: (p) => (p.name === 'demo' ? [...fakeWt.values()].sort((a, b) => a.name.localeCompare(b.name)) : []),
+  create: async (p, name) => {
+    chantierCalls.push(['create', p.name, name]);
+    const c = { name, path: WT_PATH, branch: name };
+    fakeWt.set(name, c);
+    return c;
+  },
+  remove: async (p, name, { hasLiveSession } = {}) => {
+    chantierCalls.push(['remove', p.name, name, hasLiveSession]);
+    if (hasLiveSession) throw new Error('session vivante dans ce chantier');
+    fakeWt.delete(name);
+  },
+};
+
 before(async () => {
   sessions = new SessionManager({
     command: process.execPath,
     args: () => ['-e', "process.stdout.write('READY\\n');setInterval(()=>{},1000)"],
+    listChantiers: chantiers.list,
   });
   app = createApp({
     config: { port: PORT, projects: [{ name: 'demo', path: process.cwd() }] },
     token,
     sessions,
-    pastSessions: (project) => (project.name === 'demo' ? [{ id: '55555555-5555-4555-8555-555555555555', title: 'Titre passé', mtime: 1, size: 2 }] : []),
+    chantiers,
+    pastSessions: (place) => {
+      pastCalls.push(place);
+      return place.name === 'demo' ? [{ id: '55555555-5555-4555-8555-555555555555', title: 'Titre passé', mtime: 1, size: 2 }] : [];
+    },
   });
   await app.listen();
 });
@@ -362,5 +387,88 @@ test('WS : close ferme une session ; id inconnu → erreur', async () => {
   await waitFor(() => msgs.some((m) => m.type === 'sessions' && !m.sessions.some((x) => x.key === s.id)));
   ws.send(JSON.stringify({ type: 'close', id: s.id }));
   await waitFor(() => msgs.some((m) => m.type === 'error'));
+  ws.close();
+});
+
+test('WS : start dans un chantier listé ; chantier inconnu ou invalide → erreur, rien ne démarre', async () => {
+  closeAll();
+  const { ws, msgs } = await openCollect();
+  for (const bad of ['inconnu', '../x', 42]) {
+    ws.send(JSON.stringify({ type: 'start', project: 'demo', chantier: bad, cols: 80, rows: 24 }));
+  }
+  await waitFor(() => msgs.filter((m) => m.type === 'error').length >= 3);
+  assert.equal(sessions.sessions.size, 0);
+  ws.send(JSON.stringify({ type: 'start', project: 'demo', chantier: 'x', cols: 80, rows: 24 }));
+  await waitFor(() => msgs.some((m) => m.type === 'started'));
+  const s = sessions.get(msgs.find((m) => m.type === 'started').id);
+  assert.equal(s.chantier, 'x');
+  assert.equal(s.project.path, WT_PATH);
+  assert.equal(s.project.name, 'demo');
+  await waitFor(() => msgs.some((m) => m.type === 'sessions' && m.sessions.find((c) => c.key === s.id)?.chantier === 'x'));
+  ws.close();
+  closeAll();
+});
+
+test('WS : list-sessions et resume dans un chantier passent le lieu du chantier', async () => {
+  closeAll();
+  pastCalls.length = 0;
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'list-sessions', project: 'demo', chantier: 'x' }));
+  await waitFor(() => msgs.some((m) => m.type === 'past-sessions'));
+  const r = msgs.find((m) => m.type === 'past-sessions');
+  assert.equal(r.chantier, 'x');
+  assert.equal(pastCalls.at(-1).chantier, 'x');
+  ws.send(JSON.stringify({ type: 'list-sessions', project: 'demo', chantier: 'inconnu' }));
+  await waitFor(() => msgs.some((m) => m.type === 'error'));
+  ws.send(JSON.stringify({ type: 'resume', project: 'demo', chantier: 'x', id: PAST_ID, cols: 80, rows: 24 }));
+  await waitFor(() => msgs.some((m) => m.type === 'started'));
+  assert.equal(sessions.get(msgs.find((m) => m.type === 'started').id).chantier, 'x');
+  ws.close();
+  closeAll();
+});
+
+test('WS : resume avec replace refusé si la session remplacée est dans un autre lieu', async () => {
+  closeAll();
+  const old = sessions.start({ name: 'demo', path: WT_PATH, chantier: 'x' }, 80, 24);
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'resume', project: 'demo', id: PAST_ID, replace: old.id, cols: 80, rows: 24 }));
+  await waitFor(() => msgs.some((m) => m.type === 'error'));
+  assert.equal(sessions.get(old.id), old, 'la session du chantier n\'est pas remplacée depuis le dossier principal');
+  assert.equal(msgs.some((m) => m.type === 'started'), false);
+  ws.close();
+  closeAll();
+});
+
+test('WS : create-chantier valide le nom, crée, répond et renotifie le flux global', async () => {
+  chantierCalls.length = 0;
+  const { ws, msgs } = await openCollect();
+  for (const bad of ['../x', 'Main', 'main', 42]) ws.send(JSON.stringify({ type: 'create-chantier', project: 'demo', name: bad }));
+  ws.send(JSON.stringify({ type: 'create-chantier', project: 'inconnu', name: 'ok' }));
+  await waitFor(() => msgs.filter((m) => m.type === 'error').length >= 5);
+  assert.deepEqual(chantierCalls, [], 'nom ou projet invalide : create jamais appelé');
+  ws.send(JSON.stringify({ type: 'create-chantier', project: 'demo', name: 'nouveau' }));
+  await waitFor(() => msgs.some((m) => m.type === 'chantier-created'));
+  assert.deepEqual(msgs.find((m) => m.type === 'chantier-created'), { type: 'chantier-created', project: 'demo', chantier: 'nouveau' });
+  await waitFor(() => msgs.some((m) => m.type === 'sessions' && m.sessions.some((c) => c.key === 'c:demo/nouveau')));
+  ws.close();
+});
+
+test('WS : remove-chantier refusé si session vivante, sinon retire et renotifie', async () => {
+  closeAll();
+  fakeWt.set('y', { name: 'y', path: WT_PATH, branch: 'y' });
+  chantierCalls.length = 0;
+  const s = sessions.start({ name: 'demo', path: WT_PATH, chantier: 'y' }, 80, 24);
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'remove-chantier', project: 'demo', chantier: 'y' }));
+  await waitFor(() => msgs.some((m) => m.type === 'error'));
+  assert.match(msgs.find((m) => m.type === 'error').message, /session/);
+  assert.deepEqual(chantierCalls.at(-1), ['remove', 'demo', 'y', true]);
+  sessions.close(s.id);
+  ws.send(JSON.stringify({ type: 'remove-chantier', project: 'demo', chantier: 'y' }));
+  await waitFor(() => msgs.some((m) => m.type === 'chantier-removed'));
+  assert.deepEqual(msgs.find((m) => m.type === 'chantier-removed'), { type: 'chantier-removed', project: 'demo', chantier: 'y' });
+  await waitFor(() => msgs.some((m) => m.type === 'sessions' && !m.sessions.some((c) => c.chantier === 'y')));
+  ws.send(JSON.stringify({ type: 'remove-chantier', project: 'demo', chantier: 'inconnu' }));
+  await waitFor(() => msgs.filter((m) => m.type === 'error').length >= 2);
   ws.close();
 });
