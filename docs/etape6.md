@@ -18,11 +18,11 @@
 - Le relais exécute la `statusLine` de `~/.claude/settings.json` avec le JSON reçu sur stdin, rend sa sortie au terminal (barre inchangée) et la poste à `/status/<jeton>/<id>` (même contrôle que les hooks).
 - La commande exécutée vient uniquement du fichier de réglages de l'utilisateur, jamais de données reçues ; garde-fou contre l'auto-appel.
 - Rendu : `public/ansi.js` (SGR : gras, 16 couleurs, 256, RGB), spans en `textContent`, entre la conversation et Neovim.
-- À vérifier à la main : la `statusLine` de `--settings` l'emporte sur celle de `~/.claude/settings.json`.
+- Vérifié à la main (2026-11-06) : la `statusLine` de `--settings` l'emporte sur celle de `~/.claude/settings.json` ; la barre affichée est identique à celle du terminal.
 
 ### Réflexion (thinking)
 - Vérifié dans le binaire 2.1.318 : `showThinkingSummaries` vaut `false` par défaut, donc blocs thinking vides dans le JSONL.
-- `--settings` injecte `showThinkingSummaries: true` ; le rendu « Réflexion » existait déjà.
+- `--settings` injecte `showThinkingSummaries: true` ; le rendu « Réflexion » existait déjà. Vérifié à la main (2026-11-06) : les blocs ont du texte.
 
 ## Lot 2 : interface de la vue session
 
