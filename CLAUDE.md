@@ -82,7 +82,9 @@ Une étape à la fois, en mode Plan pour chacune, testée avant de passer à la 
 3. Neovim dans le navigateur et pont RPC pour envoyer le prompt. ✅ Fait et validé à la main (voir `docs/etape3.md`).
 4. Hooks HTTP et machine à états. ✅ Fait et validé à la main (voir `docs/etape4.md`).
 5. Tableau de bord multi-sessions et reprise de session. ✅ Fait et validé à la main (voir `docs/etape5.md`, `docs/etape5b.md`).
-6. Le reste selon les décisions ci-dessous.
+6. Confort d'usage (voir `docs/etape6.md`).
+7. Sessions multiples par dossier, puis chantiers en worktrees (D17).
+8. Le reste selon les décisions ci-dessous.
 
 ## Projets similaires et ce qu'on en retient
 
@@ -109,7 +111,14 @@ Notre différence : aucun de ces projets ne fait de Neovim la zone de saisie, av
 ### Fonctionnement
 - **D5. Association pty ↔ fichier JSONL.** ✅ Décidé : `claude --session-id <uuid>` (vérifié sur 2.1.318). Le serveur génère l'UUID et suit `~/.claude/projects/<dossier-encodé>/<uuid>.jsonl`. À vérifier à la main : encodage du dossier sous Windows.
 - **D6. Cycle de vie.** ✅ Décidé : fermer le navigateur ne tue rien (pty et `claude` vivent côté serveur). Au redémarrage du serveur, les pty meurent ; les projets réapparaissent « non lancé ». Pas de fichier d'UUID à nous : le serveur liste les JSONL que claude écrit (`src/sessions-list.js`, titre = dernier `ai-title`) et le bouton « Reprendre… » relance `claude --resume <uuid>` (même fichier complété, historique rejoué dans l'interface ; voir `docs/etape5b.md`). Rattacher un `claude` externe : impossible.
-- **D7. Création des sessions.** ✅ Décidé : depuis l'interface uniquement (dossier choisi dans une liste de projets), sans détection des sessions externes ni worktree automatique en v1.
+- **D7. Création des sessions.** ✅ Décidé : depuis l'interface uniquement (dossier choisi dans une liste de projets), sans détection des sessions externes. Worktrees : révisé par D17.
+- **D17. Plusieurs sessions par dossier, chantiers en worktrees (étape 7).** ✅ Décidé (2026-11-06) :
+  - Hiérarchie : Projet > Chantier (branche + worktree) > Sessions. Les sessions sont indexées par UUID, plus par projet.
+  - Lot A : « + Session » dans un dossier déjà occupé, en mode *Consultation* (`--permission-mode plan`, lecture seule) ou *Écrivain* (avertissement si un écrivain existe déjà : chacun ne committe que ses fichiers). Étiquette libre optionnelle (« base », « code ») affichée sur la carte. Onglets des sessions sœurs dans la vue session.
+  - Lot B : un chantier = un nom choisi par l'utilisateur, validé strictement, qui donne la branche et le worktree (`claude -w`). Le dossier principal reste sur `main` et sert aux fusions et suppressions.
+  - Lot C : la carte d'un chantier affiche la note `chantiers\<branche>.md` si elle existe (lecture seule ; la régie ne déplace jamais les notes).
+  - Raison : deux tâches couplées (code + base) partagent un worktree ; deux tâches indépendantes et longues prennent chacune le leur. Une branche sans worktree n'isole rien.
+  - Vérifié sur 2.1.319 : `claude -w <nom>` crée `<projet>/.claude/worktrees/<nom>` sur la branche `worktree-<nom>` ; le JSONL va dans le dossier encodé du worktree ; le worktree reste `locked` après la sortie de `claude` ; `.claude/` apparaît non suivi dans le dépôt principal. Nettoyage à notre charge.
 - **D8. Installation des hooks.** ✅ Décidé : injection par `claude --settings <JSON>` (option vérifiée) à chaque lancement ; `~/.claude/settings.json` n'est jamais modifié. À vérifier à l'étape 4 : fusion avec les hooks existants, pas remplacement.
 
 ### Idées à intégrer en v1 ou plus tard
