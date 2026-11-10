@@ -128,6 +128,27 @@ test('removeChantier : dossier verrouillé par un autre programme → branche su
     }
   });
 
+// Vu à l'essai manuel du 2026-11-10 : une PR fusionnée en squash/rebase laisse la branche « non
+// fusionnée » pour git, à vie. Le refus doit dire où fusionner et pourquoi, sans proposer --force.
+test('removeChantier : refus « non fusionnée » nomme la branche cible, la branche du chantier et le squash', async () => {
+  const p = repo();
+  const c = await createChantier(p, 'essai');
+  fs.writeFileSync(path.join(c.path, 'b.txt'), 'b\n');
+  git(c.path, 'add', 'b.txt');
+  git(c.path, 'commit', '-q', '-m', 'b');
+  git(p.path, 'merge', '-q', '--squash', 'essai');
+  git(p.path, 'commit', '-q', '-m', 'squash de essai');
+  await assert.rejects(removeChantier(p, 'essai'), (e) => {
+    assert.match(e.message, /non fusionnée/);
+    assert.match(e.message, /essai/, 'nomme la branche du chantier');
+    assert.match(e.message, /main/, 'nomme la branche où fusionner');
+    assert.match(e.message, /squash|rebase/i, 'explique le cas squash/rebase');
+    assert.doesNotMatch(e.message, /--force|-D\b/, 'ne suggère jamais de forcer');
+    return true;
+  });
+  assert.deepEqual(listChantiers(p).map((x) => x.name), ['essai'], 'rien n\'a été retiré');
+});
+
 test('removeChantier : chantier inconnu ou nom invalide refusés', async () => {
   const p = repo();
   await assert.rejects(removeChantier(p, 'absent'));

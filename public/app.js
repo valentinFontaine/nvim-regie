@@ -21,6 +21,8 @@ const notifBtn = document.getElementById('notif');
 const picker = document.getElementById('picker');
 const resumeBtn = document.getElementById('resume-btn');
 const addBtn = document.getElementById('add-btn');
+const closeChantierBtn = document.getElementById('close-chantier-btn');
+let closingFromBar = false; // clôture lancée depuis la barre : le refus s'affiche en alerte
 const closeBtn = document.getElementById('close-btn');
 const tabsEl = document.getElementById('tabs');
 
@@ -317,8 +319,18 @@ function updateSessionButtons() {
   resumeBtn.hidden = !currentId;
   closeBtn.hidden = !currentId;
   addBtn.hidden = current === null;
+  closeChantierBtn.hidden = current === null || currentChantier === null;
   renderTabs();
 }
+
+closeChantierBtn.onclick = () => {
+  if (current === null || currentChantier === null) return;
+  if (!confirm(`Clore le chantier « ${currentChantier} » ? Le worktree et la branche seront supprimés `
+    + '(refusé s\'il reste une session, des fichiers modifiés ou une branche non fusionnée).')) return;
+  closingFromBar = true;
+  status.textContent = 'clôture du chantier…';
+  send({ type: 'remove-chantier', project: current, chantier: currentChantier });
+};
 
 // ---------- Notifications (needs_you uniquement) ----------
 
@@ -674,6 +686,7 @@ function connect() {
     if (msg.type === 'sessions') { onSessions(msg.sessions); if (current === null && /^#\/[sp]\//.test(location.hash)) route(); }
     else if (msg.type === 'chantier-created') { awaitPlace = { project: msg.project, chantier: msg.chantier }; openAwaitedPlace(); }
     else if (msg.type === 'chantier-removed') {
+      closingFromBar = false;
       if (msg.leftover) {
         alert(`Chantier clos (branche supprimée), mais le dossier vide ${msg.leftover} est encore utilisé par un autre programme (terminal, explorateur, éditeur…). Ferme-le, puis supprime ce dossier à la main.`);
       }
@@ -695,6 +708,7 @@ function connect() {
     else if (msg.type === 'exit') status.textContent = `claude terminé (code ${msg.code})`;
     else if (msg.type === 'error') {
       status.textContent = `erreur : ${msg.message}`;
+      if (closingFromBar) { closingFromBar = false; alert(`Clôture refusée : ${msg.message}`); }
       if (chantierMsgEl?.isConnected && !chantierMsgEl.hidden) chantierMsgEl.textContent = `Refusé : ${msg.message}`;
       if (currentId === null && picker.hidden) openPicker(); // démarrage refusé (étiquette invalide…) : retour au choix
     }

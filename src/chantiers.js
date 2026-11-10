@@ -82,7 +82,11 @@ export async function removeChantier(project, name, { hasLiveSession = false } =
   try {
     await git(['merge-base', '--is-ancestor', branch, 'HEAD'], project.path);
   } catch {
-    throw new Error('branche non fusionnée');
+    const target = readBranch(project.path) ?? 'la branche du dossier principal';
+    throw new Error(
+      `branche « ${branch} » non fusionnée dans ${target} : fusionnez-la dans ${target} (merge normal). `
+      + 'Un squash ou un rebase (PR GitHub) n\'est pas reconnu comme une fusion.',
+    );
   }
   let leftover = null;
   try {
