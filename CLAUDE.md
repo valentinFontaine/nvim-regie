@@ -64,7 +64,7 @@ Un projet voisin (CloudCLI) a eu une faille critique d'injection de commande via
 - Jeton aléatoire généré au démarrage, exigé sur toutes les requêtes HTTP et WebSocket.
 - Les endpoints de hooks vérifient aussi ce jeton.
 - **Jeton (décidé)** : régénéré à chaque démarrage, jamais écrit sur le disque. Le serveur ouvre le navigateur sur `http://127.0.0.1:<port>/?token=…` ; il pose un cookie `HttpOnly; SameSite=Strict` puis redirige vers `/` (jeton absent de l'historique). Les WebSockets vérifient le cookie **et** l'en-tête `Origin`. Les hooks reçoivent le jeton dans leur URL, injectée via `--settings`.
-- **Projets autorisés (décidé)** : liste fermée dans `%LOCALAPPDATA%\nvim-regie\config.json`, éditée à la main ; le serveur refuse tout chemin hors liste. Pas de sélecteur de dossier libre en v1.
+- **Projets autorisés (décidé)** : liste fermée dans `%LOCALAPPDATA%\nvim-regie\config.json` ; le serveur refuse tout chemin hors liste. Pas de sélecteur de dossier libre en v1. Ajout possible depuis l'interface (« + Dossier »), uniquement parmi les dossiers où `claude` a déjà été lancé (clés de `projects` dans `~/.claude.json`, recalculées par le serveur) et après confirmation ; le retrait se fait en éditant `config.json` à la main.
 - **Neovim (décidé)** : ta config habituelle + un fichier Lua du projet chargé en plus (`--cmd "source …"`) qui déclare le raccourci d'envoi (configurable) et le buffer de prompt. Pas de `-u`. Exécutable : `C:\Users\irpaui\Documents\Programmes\Neovim\bin\nvim.exe` (le `nvim.ps1` du PATH n'est qu'un relais), lancé directement par `node-pty`, chemin configurable dans `config.json`.
 - **Fenêtre du serveur (décidé)** : console visible, fermer la fenêtre arrête tout ; le serveur ouvre le navigateur tout seul.
 - **Définition de « fini » pour l'étape 1 (décidé)** : une session, un projet de `config.json`, `claude` affiché dans xterm.js, avec jeton, `Origin` et port fixe en place dès cette étape.
@@ -83,7 +83,7 @@ Une étape à la fois, en mode Plan pour chacune, testée avant de passer à la 
 4. Hooks HTTP et machine à états. ✅ Fait et validé à la main (voir `docs/etape4.md`).
 5. Tableau de bord multi-sessions et reprise de session. ✅ Fait et validé à la main (voir `docs/etape5.md`, `docs/etape5b.md`).
 6. Confort d'usage (voir `docs/etape6.md`).
-7. Sessions multiples par dossier, puis chantiers en worktrees (D17). Lot A ✅ fait et validé à la main ; lot B ✅ fait et validé à la main (voir `docs/etape7.md`) ; lot C à faire.
+7. Sessions multiples par dossier, puis chantiers en worktrees (D17). Lot A ✅ fait et validé à la main ; lot B ✅ fait et validé à la main ; lot C ✅ fait (note de chantier sur la carte) et ajout d'un dossier depuis l'interface, à valider à la main (voir `docs/etape7.md`).
 8. Le reste selon les décisions ci-dessous.
 
 ## Projets similaires et ce qu'on en retient
