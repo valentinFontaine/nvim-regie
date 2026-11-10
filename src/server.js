@@ -289,8 +289,8 @@ export function createApp({
           if (!c) return reply({ type: 'error', message: 'chantier inconnu' });
           Promise.resolve()
             .then(() => chantiers.remove(project, c.name, { hasLiveSession: sessions.liveIn(project.name, c.name) }))
-            .then(() => {
-              reply({ type: 'chantier-removed', project: project.name, chantier: c.name });
+            .then((r) => {
+              reply({ type: 'chantier-removed', project: project.name, chantier: c.name, leftover: r?.leftover ?? null });
               sessions.refresh();
             })
             .catch((e) => reply({ type: 'error', message: e.message }));

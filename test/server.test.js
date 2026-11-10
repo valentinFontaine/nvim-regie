@@ -27,6 +27,7 @@ const chantiers = {
     chantierCalls.push(['remove', p.name, name, hasLiveSession]);
     if (hasLiveSession) throw new Error('session vivante dans ce chantier');
     fakeWt.delete(name);
+    return { leftover: `/reste/${name}` };
   },
 };
 
@@ -466,7 +467,7 @@ test('WS : remove-chantier refusé si session vivante, sinon retire et renotifie
   sessions.close(s.id);
   ws.send(JSON.stringify({ type: 'remove-chantier', project: 'demo', chantier: 'y' }));
   await waitFor(() => msgs.some((m) => m.type === 'chantier-removed'));
-  assert.deepEqual(msgs.find((m) => m.type === 'chantier-removed'), { type: 'chantier-removed', project: 'demo', chantier: 'y' });
+  assert.deepEqual(msgs.find((m) => m.type === 'chantier-removed'), { type: 'chantier-removed', project: 'demo', chantier: 'y', leftover: '/reste/y' });
   await waitFor(() => msgs.some((m) => m.type === 'sessions' && !m.sessions.some((c) => c.chantier === 'y')));
   ws.send(JSON.stringify({ type: 'remove-chantier', project: 'demo', chantier: 'inconnu' }));
   await waitFor(() => msgs.filter((m) => m.type === 'error').length >= 2);

@@ -84,6 +84,17 @@ export async function removeChantier(project, name, { hasLiveSession = false } =
   } catch {
     throw new Error('branche non fusionnée');
   }
-  await git(['worktree', 'remove', c.path], project.path);
+  let leftover = null;
+  try {
+    await git(['worktree', 'remove', c.path], project.path);
+  } catch (e) {
+    // Windows : un programme dont le dossier courant est le worktree (terminal, explorateur…) bloque
+    // la suppression du dossier, une fois le contenu effacé. Sans `.git`, le worktree n'est plus
+    // qu'un dossier vide : on termine la clôture et on le signale. Sinon, rien n'a été fait.
+    if (fs.existsSync(path.join(c.path, '.git'))) throw e;
+    await git(['worktree', 'prune'], project.path);
+    leftover = c.path;
+  }
   await git(['branch', '-d', branch], project.path);
+  return { leftover };
 }

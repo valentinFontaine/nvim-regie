@@ -673,7 +673,12 @@ function connect() {
     const msg = JSON.parse(ev.data);
     if (msg.type === 'sessions') { onSessions(msg.sessions); if (current === null && /^#\/[sp]\//.test(location.hash)) route(); }
     else if (msg.type === 'chantier-created') { awaitPlace = { project: msg.project, chantier: msg.chantier }; openAwaitedPlace(); }
-    else if (msg.type === 'chantier-removed') { if (msg.project === current && msg.chantier === currentChantier) location.hash = '#/'; }
+    else if (msg.type === 'chantier-removed') {
+      if (msg.leftover) {
+        alert(`Chantier clos (branche supprimée), mais le dossier vide ${msg.leftover} est encore utilisé par un autre programme (terminal, explorateur, éditeur…). Ferme-le, puis supprime ce dossier à la main.`);
+      }
+      if (msg.project === current && msg.chantier === currentChantier) location.hash = '#/';
+    }
     else if (current === null) return; // messages de session : seulement dans la vue session
     else if (msg.type === 'started') onStarted(msg.id);
     else if (msg.type === 'past-sessions') {

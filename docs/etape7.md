@@ -33,6 +33,7 @@ D17 révisée (2026-11-06) : `git worktree add` plutôt que `claude -w`. La bran
   - Création : `git worktree add -b <nom> <chemin> HEAD`, donc depuis la branche courante du dossier principal.
   - Listing sans git : les sous-dossiers qui ont un `.git`, avec la branche lue par `readBranch`. Les worktrees faits par `claude -w` apparaissent aussi.
   - Clôture refusée s'il reste une session vivante, si `status --porcelain` n'est pas vide (fichiers non suivis compris) ou si `merge-base --is-ancestor <branche> HEAD` échoue. Sinon : `worktree remove`, puis `branch -d`. Jamais de `--force`.
+  - Défaut vu à l'essai manuel (2026-11-10) : un programme resté dans le worktree (terminal, explorateur) verrouille le dossier sous Windows. `worktree remove` efface alors le contenu et désenregistre le worktree, puis échoue sur le dossier, et la branche restait. Corrigé : si le `.git` du worktree a disparu, on fait `worktree prune` puis `branch -d`, et on renvoie `leftover`. L'interface signale le dossier vide à supprimer à la main. Test : un processus enfant dont le dossier courant est le worktree (Windows seulement).
   - git est lancé par `execFile`, avec un tableau d'arguments.
 - Un **lieu** `{name, path, chantier}` remplace le projet passé à `Session`. Le cwd de claude et de nvim, le transcript (dossier encodé du worktree) et la reprise suivent tout seuls.
 - WebSocket :

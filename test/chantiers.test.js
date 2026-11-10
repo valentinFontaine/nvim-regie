@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import {
   cleanChantierName, chantierPath, listChantiers, createChantier, removeChantier,
 } from '../src/chantiers.js';
@@ -101,6 +101,32 @@ test('removeChantier : après fusion, worktree et branche disparaissent', async 
   assert.equal(fs.existsSync(c.path), false);
   assert.equal(git(p.path, 'branch', '--list', 'essai'), '');
 });
+
+// Vu sur l'essai manuel du 2026-11-10 : un terminal resté dans le worktree verrouille le dossier
+// (Windows). `git worktree remove` vide et désenregistre le worktree, puis échoue sur le dossier :
+// la branche restait et la régie ne voyait plus le chantier. Attendu : clôture menée à son terme,
+// dossier vide restant signalé.
+test('removeChantier : dossier verrouillé par un autre programme → branche supprimée, reste signalé',
+  { skip: process.platform !== 'win32' && 'verrou de dossier courant propre à Windows' }, async () => {
+    const p = repo();
+    const c = await createChantier(p, 'essai');
+    fs.writeFileSync(path.join(c.path, 'b.txt'), 'b\n');
+    git(c.path, 'add', 'b.txt');
+    git(c.path, 'commit', '-q', '-m', 'b');
+    git(p.path, 'merge', '-q', '--ff-only', 'essai');
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: c.path, stdio: 'ignore' });
+    await new Promise((r) => child.once('spawn', r));
+    try {
+      const res = await removeChantier(p, 'essai');
+      assert.equal(res?.leftover, c.path);
+      assert.equal(git(p.path, 'branch', '--list', 'essai'), '');
+      assert.ok(!git(p.path, 'worktree', 'list', '--porcelain').includes('essai'));
+      assert.deepEqual(listChantiers(p), []);
+    } finally {
+      child.kill();
+      await new Promise((r) => child.once('exit', r));
+    }
+  });
 
 test('removeChantier : chantier inconnu ou nom invalide refusés', async () => {
   const p = repo();
