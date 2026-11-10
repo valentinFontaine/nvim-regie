@@ -333,6 +333,8 @@ export class SessionManager {
       key, id: null, project: p.name, chantier, branch, mode: null, label: '',
       state: 'stopped', activity: '', since: null, excerpt: '',
     });
+    // Extrait de la note d'un chantier (carte de chantier seulement, jamais le dossier principal).
+    const withNote = (c, p) => (this.spec.chantierNote ? { ...c, note: this.spec.chantierNote(p, c.branch) ?? '' } : c);
     for (const p of projects) {
       const mine = [...this.sessions.values()].filter((s) => s.project.name === p.name);
       const main = mine.filter((s) => s.chantier === null);
@@ -342,12 +344,14 @@ export class SessionManager {
       const listed = this.spec.listChantiers ? this.spec.listChantiers(p) : [];
       for (const c of listed) {
         const here = mine.filter((s) => s.chantier === c.name);
-        if (here.length) for (const s of here) list.push(card(s, p, c.name, c.branch));
-        else list.push(stopped(`c:${p.name}/${c.name}`, p, c.name, c.branch));
+        if (here.length) for (const s of here) list.push(withNote(card(s, p, c.name, c.branch), p));
+        else list.push(withNote(stopped(`c:${p.name}/${c.name}`, p, c.name, c.branch), p));
       }
       const known = new Set(listed.map((c) => c.name));
       for (const s of mine) {
-        if (s.chantier !== null && !known.has(s.chantier)) list.push(card(s, p, s.chantier, readBranch(s.project.path)));
+        if (s.chantier !== null && !known.has(s.chantier)) {
+          list.push(withNote(card(s, p, s.chantier, readBranch(s.project.path)), p));
+        }
       }
     }
     return list;

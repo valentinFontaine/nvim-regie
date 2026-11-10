@@ -9,6 +9,7 @@ import { SessionManager, claudeArgs } from './session.js';
 import { findTranscript, defaultProjectsRoot, acceptTranscript } from './transcript.js';
 import { listPastSessions } from './sessions-list.js';
 import { listChantiers, createChantier, removeChantier, cleanChantierName } from './chantiers.js';
+import { readNote, noteExcerpt } from './notes.js';
 import {
   COOKIE_NAME, createToken, tokenMatches, parseCookies, originAllowed, hostAllowed,
 } from './security.js';
@@ -100,6 +101,7 @@ export function createApp({
   config, token, sessions,
   pastSessions = (project) => listPastSessions(defaultProjectsRoot(), project.path),
   chantiers = { list: listChantiers, create: createChantier, remove: removeChantier },
+  chantierNote = () => null, // (project, branche) → texte de la note ou null
 }) {
   const { port } = config;
   const server = http.createServer((req, res) => {
@@ -130,6 +132,16 @@ export function createApp({
       return send(200, JSON.stringify(config.projects.map((p) => ({ name: p.name }))), {
         'Content-Type': 'application/json; charset=utf-8',
       });
+    }
+
+    if (url.pathname === '/api/note') {
+      // Projet et chantier doivent exister (liste fermée, listing git) : aucun chemin ne vient du client.
+      const project = config.projects.find((p) => p.name === url.searchParams.get('project'));
+      const wanted = url.searchParams.get('chantier');
+      const chantier = project && wanted ? chantiers.list(project).find((c) => c.name === wanted) : null;
+      const text = chantier ? chantierNote(project, chantier.branch ?? chantier.name) : null;
+      if (text === null) return send(404, 'Not Found');
+      return send(200, JSON.stringify({ text }), { 'Content-Type': 'application/json; charset=utf-8' });
     }
 
     if (url.pathname === '/vendor/highlight/core.js') {
@@ -353,18 +365,20 @@ async function main() {
   }
   const claude = resolveClaude();
   const token = createToken();
+  const chantierNote = (project, branch) => readNote(config.notesDir, project.path, branch);
   const sessions = new SessionManager({
     command: claude,
     args: (id, resume, mode) => claudeArgs(id, resume, mode, hooksSettings(config.port, token, id)),
     nvim: { path: config.nvimPath, lua: path.join(ROOT, 'nvim', 'regie.lua'), sendKey: config.sendKey },
     listChantiers,
+    chantierNote: (project, branch) => noteExcerpt(chantierNote(project, branch)),
     transcript: {
       resolve: (project, id) => findTranscript(defaultProjectsRoot(), project.path, id),
       // Un transcript_path reçu d'un hook n'est suivi que s'il est un .jsonl sous la racine des projets.
       accept: (p) => acceptTranscript(defaultProjectsRoot(), p),
     },
   });
-  const app = createApp({ config, token, sessions });
+  const app = createApp({ config, token, sessions, chantierNote });
   await app.listen();
   const url = `http://127.0.0.1:${config.port}/?token=${token}`;
   console.log(`nvim-regie : http://127.0.0.1:${config.port}/ (claude : ${claude})`);

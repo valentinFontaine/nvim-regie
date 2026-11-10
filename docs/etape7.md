@@ -50,4 +50,10 @@ D17 révisée (2026-11-06) : `git worktree add` plutôt que `claude -w`. La bran
 - Sélecteur du dossier principal : « Nouveau chantier (depuis <branche>) », avec un avertissement si la branche n'est pas `main` ou `master`. Le chantier créé s'ouvre sur son sélecteur.
 - Sélecteur d'un chantier : « Clore le chantier » avec `confirm()`. Si le serveur refuse, son message s'affiche tel quel.
 
-## Lot C : note de chantier sur la carte (à faire)
+## Lot C : note de chantier sur la carte (fait, à valider à la main)
+
+- Fichier lu : `<notesDir>\<dossier du projet>\chantiers\<branche>.md` (`/` → `-`), lecture seule. `notesDir` est une clé optionnelle de `config.json` (défaut : `notes_Claude` d'OneDrive). Absent ou introuvable : pas de note, pas d'erreur.
+- `src/notes.js` : `noteFile` valide la branche (`[\w.-]`, ni `..` ni séparateur) et vérifie que le chemin reste sous `notesDir` ; `readNote` plafonne à 100 Ko ; `noteExcerpt` garde « Objectif » et « Prochaine commande » du gabarit (sinon le début, 300 caractères).
+- Carte d'un chantier : champ `note` (extrait) dans `summaries`, jamais pour le dossier principal. Le texte complet vient de `GET /api/note?project=&chantier=` (cookie exigé ; projet et chantier doivent exister, 404 sinon) et s'affiche en Markdown assaini. L'état déplié survit aux mises à jour de la grille.
+- Les notes sont relues à chaque mise à jour du flux (quelques lectures de petits fichiers par chantier).
+- Reliquats du lot B réglés ici : bouton « Clore le chantier » aussi dans la barre de la vue session ; refus « non fusionnée » qui nomme la branche du chantier et celle où fusionner, et explique que squash/rebase n'est pas reconnu.

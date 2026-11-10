@@ -42,6 +42,7 @@ before(async () => {
     token,
     sessions,
     chantiers,
+    chantierNote: (p, branch) => (p.name === 'demo' && branch === 'x' ? '**Objectif** : o\n\ntexte' : null),
     pastSessions: (place) => {
       pastCalls.push(place);
       return place.name === 'demo' ? [{ id: '55555555-5555-4555-8555-555555555555', title: 'Titre passé', mtime: 1, size: 2 }] : [];
@@ -84,6 +85,20 @@ test('mauvais jeton : 401, pas de cookie', async () => {
   const r = await get(`/?token=${'b'.repeat(64)}`);
   assert.equal(r.status, 401);
   assert.equal(r.headers['set-cookie'], undefined);
+});
+
+test('/api/note : 401 sans cookie ; avec cookie, note du chantier ; 404 si inconnu ou sans note', async () => {
+  const q = (p, c) => `/api/note?project=${encodeURIComponent(p)}&chantier=${encodeURIComponent(c)}`;
+  assert.equal((await get(q('demo', 'x'))).status, 401);
+  const c = await cookie();
+  const ok = await get(q('demo', 'x'), { cookie: c });
+  assert.equal(ok.status, 200);
+  assert.match(ok.headers['content-type'], /application\/json/);
+  assert.deepEqual(JSON.parse(ok.body), { text: '**Objectif** : o\n\ntexte' });
+  for (const [p, ch] of [['demo', 'inconnu'], ['autre', 'x'], ['demo', '../x'], ['demo', ''], ['', 'x']]) {
+    assert.equal((await get(q(p, ch), { cookie: c })).status, 404, `${p}/${ch}`);
+  }
+  assert.equal((await get('/api/note', { cookie: c })).status, 404, 'sans paramètres');
 });
 
 test('Host étranger refusé (DNS rebinding)', async () => {

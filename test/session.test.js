@@ -469,6 +469,20 @@ test('summaries : sans listChantiers dans la spec, aucun chantier', () => {
   assert.deepEqual(m.summaries([{ name: 'a', path: process.cwd() }]).map((c) => [c.key, c.chantier]), [['p:a', null]]);
 });
 
+test('summaries : la carte d\'un chantier porte l\'extrait de sa note (branche du chantier), pas le dossier principal', () => {
+  const cwd = process.cwd();
+  const calls = [];
+  const m = new SessionManager({
+    ...echoer,
+    listChantiers: () => [{ name: 'y', path: cwd, branch: 'br-y' }, { name: 'z', path: cwd, branch: 'br-z' }],
+    chantierNote: (p, branch) => { calls.push([p.name, branch]); return branch === 'br-y' ? 'Objectif : y' : ''; },
+  });
+  const sums = m.summaries([{ name: 'a', path: cwd }]);
+  assert.deepEqual(sums.map((c) => [c.key, c.note]), [['p:a', undefined], ['c:a/y', 'Objectif : y'], ['c:a/z', '']]);
+  assert.deepEqual(calls, [['a', 'br-y'], ['a', 'br-z']]);
+  m.killAll();
+});
+
 test('close notifie le flux global', () => {
   const m = new SessionManager(echoer);
   const p = { name: 'p', path: process.cwd() };

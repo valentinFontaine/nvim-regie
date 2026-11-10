@@ -257,6 +257,43 @@ function tagFor(c) {
   return name ? el('span', `tag ${c.mode ?? ''}`, name) : null;
 }
 
+// Notes de chantier dépliées (par clé de carte) : la grille est reconstruite à chaque mise à jour.
+const openNotes = new Set();
+
+/** Extrait de la note du chantier + dépli du texte complet (GET /api/note, rendu Markdown assaini). */
+function noteBlock(c) {
+  const box = el('div', 'note');
+  box.onclick = (ev) => ev.stopPropagation(); // ne pas ouvrir la session
+  box.onkeydown = (ev) => ev.stopPropagation();
+  const toggle = el('button', null, '');
+  const full = el('div', 'full');
+  const nx = el('div', 'nx', c.note);
+  const show = async () => {
+    full.textContent = 'Chargement…';
+    try {
+      const r = await fetch(`/api/note?project=${encodeURIComponent(c.project)}&chantier=${encodeURIComponent(c.chantier)}`);
+      if (!r.ok) throw new Error(String(r.status));
+      full.innerHTML = renderMarkdown((await r.json()).text); // assaini par DOMPurify (render.js)
+    } catch {
+      full.textContent = 'Note illisible.';
+    }
+  };
+  const sync = () => {
+    const open = openNotes.has(c.key);
+    toggle.textContent = open ? 'Replier la note' : 'Note complète';
+    nx.hidden = open;
+    full.hidden = !open;
+  };
+  toggle.onclick = () => {
+    if (openNotes.has(c.key)) openNotes.delete(c.key); else { openNotes.add(c.key); show(); }
+    sync();
+  };
+  if (openNotes.has(c.key)) show();
+  sync();
+  box.append(nx, full, toggle);
+  return box;
+}
+
 function makeCard(c) {
   const a = el('article', `card${c.key === selected ? ' selected' : ''}`);
   a.dataset.state = c.state;
@@ -272,6 +309,7 @@ function makeCard(c) {
   a.append(head, el('div', 'label', STATE_LABELS[c.state] ?? c.state));
   if (c.activity) a.append(el('div', 'act', c.activity));
   if (c.excerpt) a.append(el('div', 'exc', c.excerpt));
+  if (c.note) a.append(noteBlock(c));
   a.onclick = () => openCard(c);
   a.onkeydown = (ev) => { if (ev.key === 'Enter') openCard(c); };
   return a;

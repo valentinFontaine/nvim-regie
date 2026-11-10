@@ -11,6 +11,8 @@ export function configPath() {
   return path.join(configDir(), 'config.json');
 }
 
+const DEFAULT_NOTES_DIR = 'C:\\Users\\irpaui\\OneDrive - Ingersoll Rand\\notes_Claude';
+
 const EXEMPLE = {
   port: 47600,
   projects: [],
@@ -52,7 +54,12 @@ export function validateConfig(raw) {
   if (typeof sendKey !== 'string' || sendKey.length < 1 || sendKey.length > 32) {
     throw new Error('config.json : "sendKey" doit être une chaîne de 1 à 32 caractères (ex. "<leader><CR>")');
   }
-  return { port, projects, nvimPath, sendKey };
+  // Dossier des notes (lecture seule) : absent ou introuvable n'est pas une erreur, les cartes n'ont alors pas de note.
+  const notesDir = raw.notesDir ?? DEFAULT_NOTES_DIR;
+  if (typeof notesDir !== 'string' || !path.isAbsolute(notesDir)) {
+    throw new Error('config.json : "notesDir" doit être un chemin absolu');
+  }
+  return { port, projects, nvimPath, sendKey, notesDir };
 }
 
 export function loadConfig() {
