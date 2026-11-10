@@ -23,7 +23,7 @@
 - Reprise sans effet depuis la page d'un projet : `s.open === currentId` valait `null === null`, le clic fermait le sélecteur. Décision sortie dans `pastSessionAction` (`public/dashboard.js`), test de régression vu rouge.
 - Outil de diagnostic utilisé : vrai serveur + faux `claude` (`node -e 'setInterval…'`) piloté dans Chrome headless par CDP (script jetable, hors dépôt).
 
-## Lot B : chantiers en worktrees (fait, validation à la main en attente)
+## Lot B : chantiers en worktrees ✅ (validé à la main, 2026-11-10)
 D17 révisée (2026-11-06) : `git worktree add` plutôt que `claude -w`. La branche porte le nom exact du chantier (cohérent avec `chantiers\<branche>.md` du lot C), et toutes les sessions du chantier tournent dans le worktree.
 
 ### Serveur
