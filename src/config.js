@@ -19,6 +19,51 @@ const EXEMPLE = {
   nvimPath: 'C:\\Users\\irpaui\\Documents\\Programmes\\Neovim\\bin\\nvim.exe',
 };
 
+/** Valide un projet {name, path} ; `names` (Set) reçoit son nom. Lève une Error au message clair. */
+export function validateProject(p, names, label = 'projet') {
+  if (!p || typeof p.name !== 'string' || !/^[\w .-]{1,64}$/.test(p.name)) {
+    throw new Error(`config.json : ${label}.name invalide`);
+  }
+  if (names.has(p.name)) throw new Error(`config.json : nom de projet en double : ${p.name}`);
+  if (typeof p.path !== 'string' || !path.isAbsolute(p.path)) {
+    throw new Error(`config.json : ${label}.path doit être un chemin absolu`);
+  }
+  const resolved = path.resolve(p.path);
+  let st;
+  try { st = fs.statSync(resolved); } catch { st = null; }
+  if (!st || !st.isDirectory()) throw new Error(`config.json : dossier introuvable : ${resolved}`);
+  names.add(p.name);
+  return { name: p.name, path: resolved };
+}
+
+/**
+ * Ajoute un projet à config.json : relit le fichier, valide, n'écrit que `projects` (les autres clés,
+ * même inconnues, sont conservées), écriture atomique (fichier temporaire puis rename).
+ */
+export function addProject(file, project) {
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
+    throw new Error(`config.json illisible (${file}) : ${e.message}`);
+  }
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.projects)) throw new Error('config.json : "projects" absent');
+  const names = new Set(raw.projects.map((p) => p?.name));
+  const added = validateProject(project, names, 'projet');
+  const lower = (p) => path.resolve(String(p)).toLowerCase();
+  if (raw.projects.some((p) => typeof p?.path === 'string' && lower(p.path) === lower(added.path))) {
+    throw new Error(`config.json : dossier déjà suivi : ${added.path}`);
+  }
+  const next = { ...raw, projects: [...raw.projects, added] };
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* déjà absent */ }
+    throw e;
+  }
+  return added;
+}
+
 /** Valide et normalise une config brute. Lève une Error au message clair. */
 export function validateConfig(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('config.json : objet attendu');
@@ -30,21 +75,7 @@ export function validateConfig(raw) {
     throw new Error('config.json : "projects" doit contenir au moins un projet {name, path}');
   }
   const names = new Set();
-  const projects = raw.projects.map((p, i) => {
-    if (!p || typeof p.name !== 'string' || !/^[\w .-]{1,64}$/.test(p.name)) {
-      throw new Error(`config.json : projects[${i}].name invalide`);
-    }
-    if (names.has(p.name)) throw new Error(`config.json : nom de projet en double : ${p.name}`);
-    names.add(p.name);
-    if (typeof p.path !== 'string' || !path.isAbsolute(p.path)) {
-      throw new Error(`config.json : projects[${i}].path doit être un chemin absolu`);
-    }
-    const resolved = path.resolve(p.path);
-    let st;
-    try { st = fs.statSync(resolved); } catch { st = null; }
-    if (!st || !st.isDirectory()) throw new Error(`config.json : dossier introuvable : ${resolved}`);
-    return { name: p.name, path: resolved };
-  });
+  const projects = raw.projects.map((p, i) => validateProject(p, names, `projects[${i}]`));
   const nvimPath = raw.nvimPath ?? EXEMPLE.nvimPath;
   if (typeof nvimPath !== 'string' || !path.isAbsolute(nvimPath)) {
     throw new Error('config.json : "nvimPath" doit être un chemin absolu');

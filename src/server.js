@@ -4,7 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
-import { loadConfig } from './config.js';
+import { loadConfig, configPath, addProject } from './config.js';
+import { listCandidates } from './candidates.js';
 import { SessionManager, claudeArgs } from './session.js';
 import { findTranscript, defaultProjectsRoot, acceptTranscript } from './transcript.js';
 import { listPastSessions } from './sessions-list.js';
@@ -102,6 +103,8 @@ export function createApp({
   pastSessions = (project) => listPastSessions(defaultProjectsRoot(), project.path),
   chantiers = { list: listChantiers, create: createChantier, remove: removeChantier },
   chantierNote = () => null, // (project, branche) → texte de la note ou null
+  candidates = (tracked) => listCandidates({ tracked }), // dossiers proposables à l'ajout
+  saveProject = (project) => addProject(configPath(), project), // écrit config.json, renvoie le projet validé
 }) {
   const { port } = config;
   const server = http.createServer((req, res) => {
@@ -306,6 +309,19 @@ export function createApp({
               sessions.refresh();
             })
             .catch((e) => reply({ type: 'error', message: e.message }));
+        } else if (msg.type === 'list-candidates') {
+          reply({ type: 'candidates', candidates: candidates(config.projects) });
+        } else if (msg.type === 'add-project') {
+          // Le client ne désigne qu'un chemin : il doit figurer dans la liste recalculée ici (~/.claude.json),
+          // le nom est celui que le serveur propose. La liste fermée ne s'ouvre jamais à un chemin libre.
+          if (typeof msg.path !== 'string' || !path.isAbsolute(msg.path)) return reply({ type: 'error', message: 'dossier non proposé' });
+          const wanted = path.resolve(msg.path).toLowerCase();
+          const cand = candidates(config.projects).find((c) => path.resolve(c.path).toLowerCase() === wanted);
+          if (!cand) return reply({ type: 'error', message: 'dossier non proposé' });
+          const added = saveProject({ name: cand.name, path: cand.path });
+          config.projects.push(added); // même tableau : les abonnés du flux global le gardent par référence
+          reply({ type: 'project-added', name: added.name });
+          sessions.refresh();
         } else if (msg.type === 'close') {
           if (session && session.id === msg.id) { if (unsub) unsub(); unsub = null; session = null; }
           if (!sessions.close(msg.id)) reply({ type: 'error', message: 'session inconnue' });

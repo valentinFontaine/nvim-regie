@@ -21,6 +21,9 @@ const notifBtn = document.getElementById('notif');
 const picker = document.getElementById('picker');
 const resumeBtn = document.getElementById('resume-btn');
 const addBtn = document.getElementById('add-btn');
+const addProjBtn = document.getElementById('addproj-btn');
+const candDlg = document.getElementById('cand-dlg');
+let candMsgEl = null;
 const closeChantierBtn = document.getElementById('close-chantier-btn');
 let closingFromBar = false; // clôture lancée depuis la barre : le refus s'affiche en alerte
 const closeBtn = document.getElementById('close-btn');
@@ -361,6 +364,50 @@ function updateSessionButtons() {
   renderTabs();
 }
 
+// ---------- Ajout d'un dossier (liste proposée par le serveur, confirmation avant écriture) ----------
+addProjBtn.onclick = () => {
+  candDlg.replaceChildren(el('p', 'empty', 'Chargement des dossiers…'));
+  if (!candDlg.open) candDlg.showModal();
+  send({ type: 'list-candidates' });
+};
+
+function renderCandidates(list) {
+  if (!candDlg.open) return;
+  const cancel = el('button', 'opt', 'Fermer');
+  cancel.onclick = () => candDlg.close();
+  const nodes = [el('h2', null, 'Suivre un dossier'), el('p', 'empty', 'Dossiers où claude a déjà été lancé, pas encore suivis :')];
+  if (!list.length) nodes.push(el('p', 'empty', 'Aucun dossier à proposer.'));
+  for (const c of list) {
+    const b = el('button', 'opt');
+    b.append(el('span', 't', c.name), el('span', 'p', c.path));
+    b.onclick = () => confirmCandidate(c, list);
+    nodes.push(b);
+  }
+  nodes.push(cancel);
+  candDlg.replaceChildren(...nodes);
+}
+
+function confirmCandidate(c, list) {
+  const ok = el('button', 'opt new', 'Ajouter ce dossier');
+  const back = el('button', 'opt', 'Retour');
+  candMsgEl = el('p', 'warn');
+  candMsgEl.hidden = true;
+  ok.onclick = () => {
+    ok.disabled = true;
+    send({ type: 'add-project', path: c.path });
+  };
+  back.onclick = () => renderCandidates(list);
+  const row = el('div', 'row');
+  row.append(ok, back);
+  candDlg.replaceChildren(
+    el('h2', null, 'Ajouter ce dossier ?'),
+    el('p', null, `Nom : ${c.name}`),
+    el('p', 'empty', c.path),
+    el('p', 'empty', 'Il sera écrit dans config.json et suivi tout de suite, sans redémarrage.'),
+    row, candMsgEl,
+  );
+}
+
 closeChantierBtn.onclick = () => {
   if (current === null || currentChantier === null) return;
   if (!confirm(`Clore le chantier « ${currentChantier} » ? Le worktree et la branche seront supprimés `
@@ -629,6 +676,7 @@ function showDash() {
   layoutBtn.hidden = true;
   interruptBtn.hidden = true;
   stateEl.hidden = true;
+  addProjBtn.hidden = false;
   projName.textContent = '';
   updateSessionButtons();
   setDrawer(false);
@@ -649,6 +697,7 @@ function enterSessionView(project, chantier) {
   stateEl.hidden = false;
   stateEl.dataset.state = '';
   stateEl.textContent = '';
+  addProjBtn.hidden = true;
   projName.textContent = placeTitle({ project, chantier: currentChantier });
   updateNotifButton();
   resetSessionView();
@@ -729,6 +778,20 @@ function connect() {
         alert(`Chantier clos (branche supprimée), mais le dossier vide ${msg.leftover} est encore utilisé par un autre programme (terminal, explorateur, éditeur…). Ferme-le, puis supprime ce dossier à la main.`);
       }
       if (msg.project === current && msg.chantier === currentChantier) location.hash = '#/';
+    }
+    else if (msg.type === 'candidates') renderCandidates(msg.candidates);
+    else if (msg.type === 'project-added') {
+      if (candDlg.open) candDlg.close();
+      status.textContent = `dossier ajouté : ${msg.name}`;
+    }
+    else if (msg.type === 'error' && current === null) {
+      // Tableau de bord : une erreur ne concerne ni session ni sélecteur (ex. ajout de dossier refusé).
+      status.textContent = `erreur : ${msg.message}`;
+      if (candDlg.open && candMsgEl?.isConnected) {
+        candMsgEl.textContent = `Refusé : ${msg.message}`;
+        candMsgEl.hidden = false;
+        for (const b of candDlg.querySelectorAll('button:disabled')) b.disabled = false;
+      }
     }
     else if (current === null) return; // messages de session : seulement dans la vue session
     else if (msg.type === 'started') onStarted(msg.id);

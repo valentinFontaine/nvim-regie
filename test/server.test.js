@@ -1,6 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { WebSocket } from 'ws';
 import { createApp } from '../src/server.js';
 import { SessionManager } from '../src/session.js';
@@ -14,6 +16,14 @@ let sessions;
 const WT_PATH = process.cwd();
 const fakeWt = new Map([['x', { name: 'x', path: WT_PATH, branch: 'x' }]]);
 const chantierCalls = [];
+// Ajout de dossier simulé : la vraie écriture de config.json est testée dans config.test.js.
+const CANDIDATES = [
+  { path: path.join(os.tmpdir(), 'cand-un'), name: 'cand-un' },
+  { path: path.join(os.tmpdir(), 'cand-deux'), name: 'cand-deux' },
+];
+const candidatesCalls = [];
+const saved = [];
+let failSave = false;
 const pastCalls = [];
 const chantiers = {
   list: (p) => (p.name === 'demo' ? [...fakeWt.values()].sort((a, b) => a.name.localeCompare(b.name)) : []),
@@ -42,6 +52,16 @@ before(async () => {
     token,
     sessions,
     chantiers,
+    candidates: (tracked) => {
+      candidatesCalls.push(tracked.length);
+      const have = new Set(tracked.map((p) => p.path));
+      return CANDIDATES.filter((c) => !have.has(c.path));
+    },
+    saveProject: (p) => {
+      if (failSave) throw new Error('disque plein');
+      saved.push(p);
+      return p;
+    },
     chantierNote: (p, branch) => (p.name === 'demo' && branch === 'x' ? '**Objectif** : o\n\ntexte' : null),
     pastSessions: (place) => {
       pastCalls.push(place);
@@ -486,5 +506,48 @@ test('WS : remove-chantier refusé si session vivante, sinon retire et renotifie
   await waitFor(() => msgs.some((m) => m.type === 'sessions' && !m.sessions.some((c) => c.chantier === 'y')));
   ws.send(JSON.stringify({ type: 'remove-chantier', project: 'demo', chantier: 'inconnu' }));
   await waitFor(() => msgs.filter((m) => m.type === 'error').length >= 2);
+  ws.close();
+});
+
+// Ajout de dossier : le client ne désigne qu'un chemin ; le serveur le retrouve dans SA liste de candidats.
+test('WS : list-candidates renvoie la liste du serveur ; add-project refuse tout chemin hors de cette liste', async () => {
+  candidatesCalls.length = 0;
+  saved.length = 0;
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'list-candidates' }));
+  await waitFor(() => msgs.some((m) => m.type === 'candidates'));
+  assert.deepEqual(msgs.find((m) => m.type === 'candidates').candidates, CANDIDATES);
+  const bads = ['C:\\Windows', '..\\x', '', 42, null, { path: CANDIDATES[0].path }];
+  for (const bad of bads) ws.send(JSON.stringify({ type: 'add-project', path: bad }));
+  ws.send(JSON.stringify({ type: 'add-project' }));
+  await waitFor(() => msgs.filter((m) => m.type === 'error').length >= bads.length + 1);
+  assert.deepEqual(saved, [], 'rien écrit pour un chemin hors liste');
+  assert.ok(!msgs.some((m) => m.type === 'project-added'));
+  ws.close();
+});
+
+test('WS : add-project d\'un candidat → écrit dans la config, projet suivi à chaud, flux global renotifié', async () => {
+  saved.length = 0;
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'add-project', path: CANDIDATES[0].path }));
+  await waitFor(() => msgs.some((m) => m.type === 'project-added'));
+  assert.deepEqual(saved, [CANDIDATES[0]]);
+  assert.deepEqual(msgs.find((m) => m.type === 'project-added'), { type: 'project-added', name: CANDIDATES[0].name });
+  await waitFor(() => msgs.some((m) => m.type === 'sessions' && m.sessions.some((c) => c.project === CANDIDATES[0].name && c.state === 'stopped')));
+  // Déjà suivi : n'est plus candidat, donc refusé (et jamais écrit deux fois).
+  ws.send(JSON.stringify({ type: 'add-project', path: CANDIDATES[0].path }));
+  await waitFor(() => msgs.some((m) => m.type === 'error'));
+  assert.equal(saved.length, 1);
+  ws.close();
+});
+
+test('WS : add-project, erreur d\'écriture → message d\'erreur, projet non ajouté', async () => {
+  failSave = true;
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'add-project', path: CANDIDATES[1].path }));
+  await waitFor(() => msgs.some((m) => m.type === 'error'));
+  assert.match(msgs.find((m) => m.type === 'error').message, /disque plein/);
+  assert.ok(!msgs.some((m) => m.type === 'sessions' && m.sessions.some((c) => c.project === CANDIDATES[1].name)));
+  failSave = false;
   ws.close();
 });

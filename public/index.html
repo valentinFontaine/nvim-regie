@@ -73,6 +73,11 @@
     #picker .form.chantier .opt { width: auto; margin: 0; }
     #picker .opt.danger { border-left: 4px solid #ef4444; width: auto; margin-top: 1rem; }
     #picker .open-tag { color: var(--accent); font-size: .85em; white-space: nowrap; }
+    #cand-dlg { background: #1e1e1e; color: var(--fg); border: 1px solid #555; border-radius: .5rem; max-width: 40rem; width: 90vw; max-height: 80vh; overflow: auto; }
+    #cand-dlg::backdrop { background: rgba(0, 0, 0, .6); }
+    #cand-dlg .opt { display: block; width: 100%; text-align: left; margin: .25rem 0; }
+    #cand-dlg .opt .p { display: block; color: var(--muted); font-size: .85em; }
+    #cand-dlg .row { display: flex; gap: .5rem; margin-top: .75rem; }
     .card .note { margin-top: .35rem; border-top: 1px solid #333; padding-top: .25rem; font-size: .85em; color: #bbb; }
     .card .note .nx { white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
     .card .note button { margin-top: .2rem; font-size: .85em; }
@@ -111,6 +116,7 @@
     <a id="back" href="#/" hidden>← Tableau de bord</a>
     <strong id="proj-name"></strong>
     <nav id="tabs" hidden></nav>
+    <button id="addproj-btn" title="Suivre un autre dossier, parmi ceux où claude a déjà été lancé">+ Dossier</button>
     <button id="add-btn" hidden title="Ouvrir une autre session dans ce dossier">+ Session</button>
     <button id="close-btn" hidden title="Arrêter claude et Neovim de cette session et retirer sa carte">Fermer</button>
     <button id="close-chantier-btn" hidden title="Supprimer le worktree et la branche de ce chantier (refusé s'il reste une session, des fichiers modifiés ou une branche non fusionnée)">Clore le chantier</button>
@@ -122,6 +128,7 @@
     <span id="status"></span>
     <button id="notif" hidden title="Notification système et bip quand une session attend ta réponse">Activer les notifications</button>
   </header>
+  <dialog id="cand-dlg"></dialog>
   <main id="dash"></main>
   <div id="sess" hidden>
     <div id="work">

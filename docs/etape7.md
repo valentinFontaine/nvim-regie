@@ -57,3 +57,12 @@ D17 révisée (2026-11-06) : `git worktree add` plutôt que `claude -w`. La bran
 - Carte d'un chantier : champ `note` (extrait) dans `summaries`, jamais pour le dossier principal. Le texte complet vient de `GET /api/note?project=&chantier=` (cookie exigé ; projet et chantier doivent exister, 404 sinon) et s'affiche en Markdown assaini. L'état déplié survit aux mises à jour de la grille.
 - Les notes sont relues à chaque mise à jour du flux (quelques lectures de petits fichiers par chantier).
 - Reliquats du lot B réglés ici : bouton « Clore le chantier » aussi dans la barre de la vue session ; refus « non fusionnée » qui nomme la branche du chantier et celle où fusionner, et explique que squash/rebase n'est pas reconnu.
+
+## Ajout d'un dossier depuis l'interface (fait, à valider à la main)
+
+La liste des projets reste fermée (`config.json`), mais elle s'alimente depuis l'interface, en choisissant parmi les dossiers où `claude` a déjà été lancé.
+- `src/candidates.js` : clés de `projects` dans `~/.claude.json` (vrais chemins, `/` normalisés en `\`). Écartés : chemins disparus ou non-dossiers, worktrees (`.claude\worktrees`), dossiers sous `os.tmpdir()` (scratchpads inclus), dossiers déjà suivis (casse ignorée). Nom proposé = dernier segment, caractères hors `[\w .-]` remplacés, suffixe « 2 », « 3 » si pris.
+- `src/config.js` : `validateProject` (extrait de `validateConfig`) et `addProject` : relit `config.json`, valide, n'ajoute que dans `projects` (autres clés conservées), écriture atomique (fichier temporaire + rename).
+- WebSocket : `list-candidates` → `candidates` ; `add-project {path}` → `project-added`. Le client ne désigne qu'un chemin : le serveur le retrouve dans SA liste recalculée, sinon « dossier non proposé ». Le nom est celui du serveur. Le projet est ajouté au tableau `config.projects` existant (les abonnés du flux global le gardent par référence), puis le flux est renotifié : pas de redémarrage.
+- Interface : bouton « + Dossier » (tableau de bord), dialogue de liste, puis confirmation (nom + chemin) avant l'écriture.
+- Limite : un dossier ajouté à chaud n'est retiré qu'en éditant `config.json` à la main.
