@@ -687,3 +687,25 @@ test('brouillon : setDraft est porté par le message d\'état et par la carte, r
   assert.equal(card().draft, false);
   m.killAll();
 });
+
+// ── Modèle en cours ──
+test('modèle : setModel diffusé dans le message d\'état et rejoué ; le transcript ne remplace pas un nom connu du même id', () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  assert.equal(got.at(-1).model, '');
+  s.setModel({ id: 'claude-opus-5-5', name: 'Opus 5.5' });
+  assert.equal(got.filter((x) => x.type === 'state').at(-1).model, 'Opus 5.5');
+  s.noteModelFromTranscript('claude-opus-5-5');
+  assert.equal(s.model.name, 'Opus 5.5');
+  s.noteModelFromTranscript('claude-sonnet-5-5'); // autre modèle (ex. /model) : l'id brut s'affiche
+  assert.equal(got.filter((x) => x.type === 'state').at(-1).model, 'claude-sonnet-5-5');
+  const late = [];
+  s.subscribe((msg) => late.push(msg));
+  assert.equal(late.filter((x) => x.type === 'state').at(-1).model, 'claude-sonnet-5-5');
+  s.setModel({ id: 42 }); // invalide : ignoré
+  s.setModel({ id: 'x'.repeat(500), name: 'y'.repeat(500) });
+  assert.ok(s.model.id.length <= 80 && s.model.name.length <= 80);
+  m.killAll();
+});

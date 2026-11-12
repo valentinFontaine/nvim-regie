@@ -44,3 +44,8 @@
 - `Session.draft` (booléen indépendant de la machine à états, repassé à `false` à la mort de nvim), porté par le message d'état et les cartes.
 - Tableau de bord : `idle` + brouillon ⇒ colonne « Terminé, non lu » ; `running` / `needs_you` gardent leur colonne ; badge violet « ✎ brouillon » sur la carte et dans la barre de session.
 - Limite : le brouillon vit dans le pty de Neovim côté serveur ; redémarrer le serveur le perd, comme la session.
+
+### Modèle en cours dans la barre du haut
+- Source principale : le JSON que `claude` donne à la statusLine (`model.id`, `model.display_name`), lu par le relais (`scripts/statusline-relay.mjs`) et posté avec le texte ; il suit donc `/model`.
+- Repli : le champ `message.model` des réponses du transcript (id brut, `<synthetic>` ignoré), utilisé avant la première statusLine, ou si le modèle des réponses diffère. Le nom lisible est gardé quand l'id est le même.
+- `Session.model` → champ `model` du message d'état (chaîne affichable) ; pastille `#model` dans l'en-tête, visible seulement dans la vue session.

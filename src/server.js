@@ -166,6 +166,7 @@ export function createApp({
   const applyStatus = (session, payload) => {
     if (typeof payload?.text !== 'string') return false;
     session.setStatus(payload.text);
+    if (payload.model && typeof payload.model === 'object') session.setModel({ id: payload.model.id, name: payload.model.display_name ?? payload.model.name });
     return true;
   };
 

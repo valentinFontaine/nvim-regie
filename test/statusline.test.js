@@ -69,6 +69,10 @@ test('route /status : texte appliqué à la session, jeton et id exigés', async
   const url = (t, id) => `/status/${t}/${id}`;
   assert.equal(await post(url(token, s.id), { text: '12k/200k | 5h ██░ 20%' }), 204);
   assert.equal(s.status, '12k/200k | 5h ██░ 20%');
+  assert.equal(await post(url(token, s.id), { text: '12k/200k | 5h ██░ 20%', model: { id: 'claude-opus-5-5', display_name: 'Opus 5.5' } }), 204);
+  assert.equal(s.model.name, 'Opus 5.5');
+  assert.equal(await post(url(token, s.id), { text: '12k/200k | 5h ██░ 20%', model: 'pas un objet' }), 204, 'modèle invalide ignoré, texte appliqué');
+  assert.equal(s.model.id, 'claude-opus-5-5');
   assert.equal(await post(url('b'.repeat(64), s.id), { text: 'x' }), 401);
   assert.equal(await post(url(token, '00000000-0000-4000-8000-000000000000'), { text: 'x' }), 404);
   assert.equal(await post(url(token, s.id), { text: 42 }), 400);
@@ -118,4 +122,21 @@ test('relais : sans statusLine utilisateur ni serveur joignable, sort proprement
   const { code, out } = await runRelay(home, 1, '{}');
   assert.equal(code, 0);
   assert.equal(out, '');
+});
+
+test('relais : transmet le modèle lu dans le JSON de la statusLine', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'regie-home-'));
+  const posts = [];
+  const server = http.createServer((req, res) => {
+    let b = '';
+    req.on('data', (c) => { b += c; });
+    req.on('end', () => { posts.push(JSON.parse(b)); res.writeHead(204); res.end(); });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const { port } = server.address();
+  await runRelay(home, port, JSON.stringify({ model: { id: 'claude-opus-5-5', display_name: 'Opus 5.5' } }));
+  await runRelay(home, port, JSON.stringify({ model: 'bizarre' }));
+  server.close();
+  assert.deepEqual(posts[0].model, { id: 'claude-opus-5-5', name: 'Opus 5.5' });
+  assert.equal(posts[1].model, undefined);
 });

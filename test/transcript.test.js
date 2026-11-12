@@ -234,3 +234,10 @@ test('toItems : turnOrigin seul (résumé de compaction) ou vrai message → pas
   const fake = { type: 'user', message: { role: 'user', content: NOTIF('abc', 'completed') } };
   assert.equal(toItems(fake)[0].origin, undefined, 'sans origin.kind, un texte qui ressemble à une notification n\'en est pas une');
 });
+
+test("toItems : le modèle d'une réponse est porté par ses items (hors « <synthetic> »)", () => {
+  const e = (model) => ({ type: 'assistant', uuid: 'a1', timestamp: '2026-11-12T10:00:00Z', message: { id: 'm1', model, content: [{ type: 'text', text: 'salut' }] } });
+  assert.equal(toItems(e('claude-sonnet-5-5'))[0].model, 'claude-sonnet-5-5');
+  assert.equal(toItems(e('<synthetic>'))[0].model, undefined);
+  assert.equal(toItems(e(42))[0].model, undefined);
+});

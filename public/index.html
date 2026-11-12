@@ -35,6 +35,8 @@
     .card .exc { font-size: .85em; margin-top: .25rem; color: #bbb; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     @media (max-width: 900px) { #dash { grid-template-columns: 1fr; } }
     #interrupt:not(:disabled) { background: #b45309; color: #fff; }
+    #model { padding: 0 .5rem; border-radius: .6rem; border: 1px solid #555; color: #d9c8a0; font-size: .9em; }
+    #model[hidden] { display: none; }
     #state { margin-left: auto; padding: 0 .5rem; border-radius: .6rem; background: #333; }
     #state[data-state="running"] { background: #1f4d7a; }
     #state[data-state="needs_you"] { background: #b45309; font-weight: bold; }
@@ -128,6 +130,7 @@
     <button id="layout" hidden title="Placer Neovim sous la conversation ou à sa droite">Neovim à droite</button>
     <button id="interrupt" disabled hidden title="Envoie Échap à claude (interrompt le tour en cours)">Interrompre</button>
     <span id="state" title="état de la session"></span>
+    <span id="model" title="Modèle utilisé par cette session" hidden></span>
     <span id="status"></span>
     <button id="notif" hidden title="Notification système et bip quand une session attend ta réponse">Activer les notifications</button>
   </header>

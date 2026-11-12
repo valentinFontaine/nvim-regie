@@ -59,10 +59,21 @@ function runUser(command, input) {
   });
 }
 
-function postStatus(text) {
+/** Modèle courant lu dans le JSON de la statusLine : {id, name} ou null (tout est borné et vérifié côté serveur). */
+function modelOf(raw) {
+  try {
+    const m = JSON.parse(raw)?.model;
+    if (!m || typeof m !== 'object' || typeof m.id !== 'string' || !m.id) return null;
+    return { id: m.id.slice(0, 80), name: typeof m.display_name === 'string' && m.display_name ? m.display_name.slice(0, 80) : null };
+  } catch {
+    return null;
+  }
+}
+
+function postStatus(text, model) {
   return new Promise((resolve) => {
     if (!/^\d+$/.test(port ?? '') || !/^[0-9a-f]{64}$/i.test(token ?? '') || !/^[0-9a-f-]{36}$/i.test(id ?? '')) return resolve();
-    const body = JSON.stringify({ text: text.slice(0, MAX_TEXT) });
+    const body = JSON.stringify({ text: text.slice(0, MAX_TEXT), ...(model ? { model } : {}) });
     const req = http.request({
       host: '127.0.0.1', port: Number(port), path: `/status/${token}/${id}`, method: 'POST',
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
@@ -78,4 +89,4 @@ const input = await readStdin();
 const command = userCommand();
 const text = command ? await runUser(command, input) : '';
 process.stdout.write(text);
-await postStatus(text);
+await postStatus(text, modelOf(input));

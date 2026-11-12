@@ -85,6 +85,7 @@ export class Session {
     this.bg = initialBg();
     this.heldByBg = false;
     this.draft = false;
+    this.model = null;
     this.probeTimer = null;
     this.probing = false;
     this.since = Date.now();
@@ -136,6 +137,8 @@ export class Session {
           this.items.push(...batch);
           if (this.items.length > MAX_ITEMS) this.items.splice(0, this.items.length - MAX_ITEMS);
           this.#confirmPending(batch);
+          const lastModel = batch.findLast((it) => it.role === 'assistant' && it.model)?.model;
+          if (lastModel) this.noteModelFromTranscript(lastModel);
           this.#emit({ type: 'transcript', items: batch });
           // Le premier lot lu d'un fichier est l'historique (reprise) : ses interruptions sont anciennes.
           if (this.backlogSeen) this.noteTranscriptItems(batch);
@@ -208,7 +211,23 @@ export class Session {
   }
 
   #stateMsg() {
-    return { type: 'state', state: this.snap.state, activity: this.snap.activity, since: this.since, excerpt: this.excerpt, bg: this.bg.tasks, draft: this.draft };
+    return { type: 'state', state: this.snap.state, activity: this.snap.activity, since: this.since, excerpt: this.excerpt, bg: this.bg.tasks, draft: this.draft, model: this.model ? (this.model.name || this.model.id) : '' };
+  }
+
+  /** Modèle en cours (statusLine : id + nom lisible). Chaînes bornées, tout le reste ignoré. */
+  setModel(m) {
+    if (!m || typeof m.id !== 'string' || !m.id) return;
+    const id = m.id.slice(0, 80);
+    const name = typeof m.name === 'string' && m.name ? m.name.slice(0, 80) : null;
+    if (this.model && this.model.id === id && this.model.name === name) return;
+    this.model = { id, name };
+    this.#emit(this.#stateMsg());
+  }
+
+  /** Modèle d'une réponse lue dans le transcript : garde le nom lisible si c'est le même id que la statusLine. */
+  noteModelFromTranscript(id) {
+    if (typeof id !== 'string' || !id) return;
+    this.setModel({ id, name: this.model?.id === id.slice(0, 80) ? this.model.name : null });
   }
 
   /** Le buffer de prompt de Neovim contient (ou non) un brouillon : indépendant de la machine à états. */

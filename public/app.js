@@ -9,6 +9,7 @@ const status = document.getElementById('status');
 const conv = document.getElementById('conv');
 const statusLineEl = document.getElementById('statusline');
 const stateEl = document.getElementById('state');
+const modelEl = document.getElementById('model');
 const interruptBtn = document.getElementById('interrupt');
 interruptBtn.onclick = () => send({ type: 'interrupt' });
 const drawer = document.getElementById('drawer');
@@ -217,7 +218,14 @@ const STATE_LABELS = {
   error: 'erreur', stopped: 'non lancé',
 };
 
+/** Modèle de la session affichée, dans la barre du haut ; masqué tant qu'on ne le connaît pas. */
+function showModel(name) {
+  modelEl.textContent = typeof name === 'string' ? name : '';
+  modelEl.hidden = !modelEl.textContent;
+}
+
 function showState(msg) {
+  showModel(msg.model);
   stateEl.dataset.state = msg.state;
   stateEl.textContent = STATE_LABELS[msg.state] ?? msg.state;
   if (msg.activity) stateEl.textContent += ` · ${msg.activity}`;
@@ -696,6 +704,7 @@ function showDash() {
   layoutBtn.hidden = true;
   interruptBtn.hidden = true;
   stateEl.hidden = true;
+  modelEl.hidden = true;
   addProjBtn.hidden = false;
   projName.textContent = '';
   updateSessionButtons();
@@ -717,6 +726,7 @@ function enterSessionView(project, chantier) {
   stateEl.hidden = false;
   stateEl.dataset.state = '';
   stateEl.textContent = '';
+  showModel('');
   addProjBtn.hidden = true;
   projName.textContent = placeTitle({ project, chantier: currentChantier });
   updateNotifButton();

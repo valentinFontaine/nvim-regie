@@ -112,7 +112,8 @@ export function toItems(entry) {
     const role = entry.type;
     const msgId = (role === 'assistant' && typeof msg.id === 'string' ? msg.id : entry.uuid) ?? null;
     const ts = typeof entry.timestamp === 'string' ? entry.timestamp : null;
-    const base = { msgId, role, ts };
+    const model = role === 'assistant' && typeof msg.model === 'string' && msg.model && msg.model !== '<synthetic>' ? msg.model.slice(0, 80) : null;
+    const base = { msgId, role, ts, ...(model ? { model } : {}) };
     // Tâche de fond (observé sur 2.1.3xx) : la notification de fin se reconnaît à origin.kind, pas à turnOrigin
     // (présent aussi sur un résumé de compaction) ; l'id de tâche d'un lancement est dans toolUseResult.
     const isNotif = role === 'user' && entry.origin?.kind === 'task-notification';
