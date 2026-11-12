@@ -60,3 +60,21 @@ Champs communs : `uuid`, `parentUuid`, `timestamp` (ISO), `sessionId`, `cwd`, `g
 `{msgId, role, ts, kind:'text'|'thinking'|'tool_use'|'tool_result', …}`
 - `text`/`thinking` : `text` ; `tool_use` : `toolUseId`, `name`, `input` ; `tool_result` : `toolUseId`, `text`, `isError`.
 - Le navigateur regroupe par `msgId` et rattache `tool_result` à son `tool_use` par `toolUseId`.
+
+## Tâches de fond (Bash `run_in_background`)
+
+Mesuré le 2026-11-12 sur les transcripts de SRMix (≈ 20 tâches, 2 fichiers). Le tour de claude se termine (`Stop`)
+pendant que la tâche tourne : la régie suit donc les tâches elle-même (`src/state.js`, `trackBg`).
+
+| Moment | Ligne | Champs utiles |
+|---|---|---|
+| Lancement | `assistant` / `tool_use` `Bash` | `input.run_in_background === true`, `input.command` |
+| Résultat immédiat | `user` / `tool_result` | champ de ligne `toolUseResult.backgroundTaskId` (ex. `buzsci941`) ; le texte donne aussi le fichier de sortie |
+| Fin | `user`, `origin.kind === "task-notification"` | texte `<task-notification><task-id>…</task-id>…<status>completed\|failed</status>…` ; **relance un tour** de l'assistant |
+| Arrêt manuel | `assistant` / `tool_use` `TaskStop` | `input.task_id` ; **aucune notification** en retour |
+
+- La notification peut arriver en plein tour (entre un `tool_use` et son `tool_result`).
+- Se fier à `origin.kind`, pas à `turnOrigin: "task_notification"` : ce dernier apparaît aussi sur un résumé de compaction.
+- Les mêmes notifications existent aussi en `queue-operation` et `attachment/queued_command` (ignorés).
+- Non établi : valeur `killed` de `status` ; comportement à la fermeture de la session avec des tâches ouvertes ;
+  si un hook part au réveil par notification (la régie n'en dépend pas).

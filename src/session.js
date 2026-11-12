@@ -5,7 +5,7 @@ import { TranscriptTail } from './transcript.js';
 import { NvimBridge, pasteSequence } from './nvim.js';
 import { cleanEnv } from './env.js';
 import { readBranch } from './git.js';
-import { initialState, next as nextState, markRead as markReadState, ptyExited, interrupted, isInterruptItem } from './state.js';
+import { initialState, next as nextState, markRead as markReadState, ptyExited, interrupted, isInterruptItem, initialBg, trackBg, afterStop } from './state.js';
 
 const MAX_EXCERPT = 200;
 const MAX_STATUS = 2000;
@@ -77,6 +77,7 @@ export class Session {
     this.id = randomUUID();
     this.claudeId = resume ? resume.toLowerCase() : this.id;
     this.snap = initialState();
+    this.bg = initialBg();
     this.since = Date.now();
     this.excerpt = '';
     this.buffer = '';
@@ -100,6 +101,7 @@ export class Session {
     this.pty.onExit(({ exitCode }) => {
       this.exited = true;
       this.exitCode = exitCode;
+      this.bg = initialBg();
       this.#setSnap(ptyExited(this.snap));
       this.#emit({ type: 'exit', code: exitCode });
       // Laisse au suivi le temps de lire les dernières lignes écrites avant la sortie.
@@ -194,7 +196,7 @@ export class Session {
   }
 
   #stateMsg() {
-    return { type: 'state', state: this.snap.state, activity: this.snap.activity, since: this.since, excerpt: this.excerpt };
+    return { type: 'state', state: this.snap.state, activity: this.snap.activity, since: this.since, excerpt: this.excerpt, bg: this.bg.tasks };
   }
 
   #setSnap(snap, excerpt) {
@@ -217,7 +219,8 @@ export class Session {
     } else if (payload.hook_event_name === 'UserPromptSubmit') {
       excerpt = '';
     }
-    this.#setSnap(nextState(this.snap, payload), excerpt);
+    const snap = payload.hook_event_name === 'Stop' ? afterStop(this.snap, this.bg) : nextState(this.snap, payload);
+    this.#setSnap(snap, excerpt);
     // /clear et /resume : SessionStart n'existe pas en HTTP, SessionEnd arrive avec reason (mesuré).
     if (payload.hook_event_name === 'SessionEnd' && (payload.reason === 'clear' || payload.reason === 'resume')) {
       this.#resetConversation();
@@ -226,6 +229,13 @@ export class Session {
 
   /** Esc en plein tour : pas de hook, mais le transcript porte « [Request interrupted by user] ». */
   noteTranscriptItems(batch) {
+    const bg = trackBg(this.bg, batch);
+    if (bg !== this.bg) { this.bg = bg; this.#setSnap(this.snap, this.excerpt); }
+    // La notification de fin d'une tâche relance un tour de claude (mesuré) : « en cours » jusqu'au Stop suivant.
+    if (batch.some((it) => it.origin === 'task-notification' && it.taskId)
+      && this.snap.state !== 'error' && this.snap.state !== 'running') {
+      this.#setSnap({ state: 'running', activity: '' });
+    }
     if (batch.some(isInterruptItem)) this.#setSnap(interrupted(this.snap));
   }
 
@@ -233,6 +243,7 @@ export class Session {
     this.items = [];
     this.pending = null;
     this.answer = '';
+    this.bg = initialBg();
     this.#emit({ type: 'transcript-reset' });
   }
 
@@ -327,11 +338,11 @@ export class SessionManager {
     const list = [];
     const card = (s, p, chantier, branch) => ({
       key: s.id, id: s.id, project: p.name, chantier, branch, mode: s.mode, label: s.label,
-      state: s.snap.state, activity: s.snap.activity, since: s.since, excerpt: s.excerpt,
+      state: s.snap.state, activity: s.snap.activity, since: s.since, excerpt: s.excerpt, bg: s.bg.tasks,
     });
     const stopped = (key, p, chantier, branch) => ({
       key, id: null, project: p.name, chantier, branch, mode: null, label: '',
-      state: 'stopped', activity: '', since: null, excerpt: '',
+      state: 'stopped', activity: '', since: null, excerpt: '', bg: [],
     });
     // Extrait de la note d'un chantier (carte de chantier seulement, jamais le dossier principal).
     const withNote = (c, p) => (this.spec.chantierNote ? { ...c, note: this.spec.chantierNote(p, c.branch) ?? '' } : c);

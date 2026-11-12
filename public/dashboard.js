@@ -96,6 +96,22 @@ export function turnLine({ running, elapsedMs, activity = '', endedAt = null }) 
   return `✻ ${d}${at}`;
 }
 
+const BG_WARN_MS = 120_000;
+
+/**
+ * Badge des tâches de fond (Bash run_in_background) d'une carte : {text, warn} ou null.
+ * `warn` quand la plus ancienne tourne depuis plus de 2 min (longue, ou peut-être bloquée).
+ */
+export function bgBadge(tasks, now) {
+  if (!Array.isArray(tasks) || !tasks.length) return null;
+  const oldest = Math.min(...tasks.map((t) => (Number.isFinite(t?.since) ? t.since : now)));
+  const age = formatDuration(now - oldest);
+  const text = tasks.length === 1
+    ? `⏳ tâche de fond${tasks[0]?.label ? ` : ${tasks[0].label}` : ''} · ${age}`
+    : `⏳ ${tasks.length} tâches de fond · ${age}`;
+  return { text, warn: now - oldest > BG_WARN_MS };
+}
+
 /** Nombre de sessions qui attendent l'utilisateur (error exclu). */
 export function titleCount(cards) {
   return cards.filter((c) => c.state === 'needs_you').length;

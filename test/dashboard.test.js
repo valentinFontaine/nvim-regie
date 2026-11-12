@@ -162,3 +162,20 @@ test('pastSessionAction : une session passée non ouverte se reprend, même sans
   assert.equal(pastSessionAction({ open: 'bbb' }, 'aaa'), 'goto');
   assert.equal(pastSessionAction({ open: 'bbb' }, null), 'goto');
 });
+
+import { bgBadge } from '../public/dashboard.js';
+
+test('bgBadge : aucune tâche → null ; une tâche → commande + durée ; plusieurs → compte', () => {
+  assert.equal(bgBadge([], 0), null);
+  assert.equal(bgBadge(undefined, 0), null);
+  assert.deepEqual(bgBadge([{ id: 'a', label: 'npm run render', since: 0 }], 4 * 60_000),
+    { text: '⏳ tâche de fond : npm run render · 4 min', warn: true });
+  assert.deepEqual(bgBadge([{ id: 'a', label: 'x', since: 0 }, { id: 'b', label: 'y', since: 60_000 }], 90_000),
+    { text: '⏳ 2 tâches de fond · 1 min', warn: false });
+});
+
+test('bgBadge : orange seulement au-delà de 2 min (la plus ancienne), tâche sans libellé tolérée', () => {
+  assert.equal(bgBadge([{ id: 'a', label: 'x', since: 0 }], 120_000).warn, false);
+  assert.equal(bgBadge([{ id: 'a', label: 'x', since: 0 }], 120_001).warn, true);
+  assert.equal(bgBadge([{ id: 'a', since: 0 }], 1000).text, '⏳ tâche de fond · 1 s');
+});

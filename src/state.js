@@ -47,6 +47,47 @@ export function next(snap, event) {
   }
 }
 
+// ── Tâches de fond (Bash run_in_background) ──
+// Le tour de claude se termine (Stop) pendant que la tâche tourne : sans ce suivi, la carte dirait « au repos ».
+// Sources, toutes dans le transcript : tool_use (commande) → tool_result (backgroundTaskId) → notification
+// de fin (origin « task-notification ») ou TaskStop (qui ne produit aucune notification).
+
+const MAX_LAUNCHES = 50;
+
+export function initialBg() {
+  return { launch: {}, tasks: [] };
+}
+
+/** Nouvel état des tâches de fond après un lot d'items du transcript (fonction pure). */
+export function trackBg(bg, items, now = Date.now()) {
+  let launch = bg.launch;
+  let tasks = bg.tasks;
+  for (const it of Array.isArray(items) ? items : []) {
+    if (!it || typeof it !== 'object') continue;
+    if (it.kind === 'tool_use' && it.name === 'Bash' && it.input?.run_in_background === true && typeof it.toolUseId === 'string') {
+      const label = oneLine(it.input.command).slice(0, MAX_ACTIVITY) || 'Bash';
+      launch = { ...launch, [it.toolUseId]: label };
+      const keys = Object.keys(launch);
+      if (keys.length > MAX_LAUNCHES) launch = Object.fromEntries(keys.slice(-MAX_LAUNCHES).map((k) => [k, launch[k]]));
+    } else if (it.kind === 'tool_result' && it.backgroundTaskId && launch[it.toolUseId] !== undefined) {
+      const { [it.toolUseId]: label, ...rest } = launch;
+      launch = rest;
+      tasks = [...tasks.filter((t) => t.id !== it.backgroundTaskId), { id: it.backgroundTaskId, label, since: now }];
+    } else if (it.kind === 'text' && it.role === 'user' && it.origin === 'task-notification' && it.taskId) {
+      tasks = tasks.filter((t) => t.id !== it.taskId);
+    } else if (it.kind === 'tool_use' && it.name === 'TaskStop' && typeof it.input?.task_id === 'string') {
+      tasks = tasks.filter((t) => t.id !== it.input.task_id);
+    }
+  }
+  return launch === bg.launch && tasks === bg.tasks ? bg : { launch, tasks };
+}
+
+/** Fin de tour : « terminé » seulement si aucune tâche de fond n'est ouverte, sinon la session travaille encore. */
+export function afterStop(snap, bg) {
+  if (snap.state === 'error') return snap;
+  return bg.tasks.length ? { state: 'running', activity: '' } : { state: 'done_unread', activity: '' };
+}
+
 /** Le pty de `claude` est mort. */
 export function ptyExited() {
   return { state: 'error', activity: '' };

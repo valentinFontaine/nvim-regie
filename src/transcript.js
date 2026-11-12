@@ -83,6 +83,16 @@ function resultText(content) {
   }).filter(Boolean).join('\n');
 }
 
+const TASK_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const cleanTaskId = (v) => (typeof v === 'string' && TASK_ID_RE.test(v) ? v : null);
+
+/** Champs d'une notification de fin de tâche : <task-id> et <status> du texte, validés. */
+function notifFields(text) {
+  const id = /<task-id>([^<]*)<\/task-id>/.exec(text)?.[1].trim();
+  const status = /<status>([^<]*)<\/status>/.exec(text)?.[1].trim();
+  return { origin: 'task-notification', taskId: cleanTaskId(id), status: status && /^[a-z_]{1,20}$/.test(status) ? status : null };
+}
+
 /**
  * Normalise une ligne JSONL en items d'affichage. Tolérant : ce qui n'est pas reconnu
  * est ignoré, aucune exception.
@@ -103,14 +113,18 @@ export function toItems(entry) {
     const msgId = (role === 'assistant' && typeof msg.id === 'string' ? msg.id : entry.uuid) ?? null;
     const ts = typeof entry.timestamp === 'string' ? entry.timestamp : null;
     const base = { msgId, role, ts };
+    // Tâche de fond (observé sur 2.1.3xx) : la notification de fin se reconnaît à origin.kind, pas à turnOrigin
+    // (présent aussi sur un résumé de compaction) ; l'id de tâche d'un lancement est dans toolUseResult.
+    const isNotif = role === 'user' && entry.origin?.kind === 'task-notification';
+    const bgId = cleanTaskId(entry.toolUseResult?.backgroundTaskId);
     const content = msg.content;
-    if (typeof content === 'string') return content ? [{ ...base, kind: 'text', text: content }] : [];
+    if (typeof content === 'string') return content ? [{ ...base, kind: 'text', text: content, ...(isNotif ? notifFields(content) : {}) }] : [];
     if (!Array.isArray(content)) return [];
     const items = [];
     for (const b of content) {
       if (!b || typeof b !== 'object') continue;
       if (b.type === 'text' && typeof b.text === 'string' && b.text) {
-        items.push({ ...base, kind: 'text', text: b.text });
+        items.push({ ...base, kind: 'text', text: b.text, ...(isNotif ? notifFields(b.text) : {}) });
       } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking) {
         items.push({ ...base, kind: 'thinking', text: b.thinking });
       } else if (b.type === 'tool_use' && typeof b.id === 'string') {
@@ -119,6 +133,7 @@ export function toItems(entry) {
         items.push({
           ...base, kind: 'tool_result', toolUseId: b.tool_use_id,
           text: truncate(resultText(b.content), MAX_RESULT), isError: b.is_error === true,
+          ...(bgId ? { backgroundTaskId: bgId } : {}),
         });
       }
     }

@@ -335,7 +335,7 @@ test('subscribeAll : liste à l\'abonnement (projets sans session = stopped), pu
   const a = last().find((x) => x.project === 'a');
   assert.equal(a.state, 'running');
   assert.equal(a.activity, 'Bash ls');
-  assert.deepEqual(Object.keys(a).sort(), ['activity', 'branch', 'chantier', 'excerpt', 'id', 'key', 'label', 'mode', 'project', 'since', 'state']);
+  assert.deepEqual(Object.keys(a).sort(), ['activity', 'bg', 'branch', 'chantier', 'excerpt', 'id', 'key', 'label', 'mode', 'project', 'since', 'state']);
   assert.equal(a.key, s.id);
   assert.equal(a.id, s.id);
   assert.equal(last().find((x) => x.project === 'b').key, 'p:b');
@@ -532,5 +532,67 @@ test('sendPrompt : prompt affiché tout de suite (pending), rejoué, effacé qua
   const after = [];
   s.subscribe((msg) => after.push(msg));
   assert.ok(!after.some((x) => x.type === 'pending'), 'plus rejoué une fois confirmé');
+  m.killAll();
+});
+
+// ── Tâches de fond ──
+const bgLaunch = [
+  { kind: 'tool_use', role: 'assistant', toolUseId: 't1', name: 'Bash', input: { command: 'npm run render', run_in_background: true } },
+  { kind: 'tool_result', role: 'user', toolUseId: 't1', text: 'running', backgroundTaskId: 'b1' },
+];
+const bgNotif = (status = 'completed') => ({ kind: 'text', role: 'user', text: '<task-notification>', origin: 'task-notification', taskId: 'b1', status });
+
+test('tâche de fond : Stop avec une tâche ouverte → running (pas done_unread), badge dans le message d\'état', () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+  s.noteTranscriptItems(bgLaunch);
+  s.applyHook({ hook_event_name: 'Stop' });
+  assert.equal(s.snap.state, 'running');
+  const st = got.filter((x) => x.type === 'state').at(-1);
+  assert.deepEqual(st.bg.map((t) => [t.id, t.label]), [['b1', 'npm run render']]);
+  m.killAll();
+});
+
+test('tâche de fond : la notification relance un tour (running), le Stop suivant conclut', () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+  s.noteTranscriptItems(bgLaunch);
+  s.applyHook({ hook_event_name: 'Stop' });
+  s.markRead();
+  s.noteTranscriptItems([bgNotif()]);
+  assert.equal(s.snap.state, 'running');
+  s.applyHook({ hook_event_name: 'Stop' });
+  assert.equal(s.snap.state, 'done_unread');
+  m.killAll();
+});
+
+test('tâche de fond : après la fin de la tâche, un Stop ordinaire donne done_unread', () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.noteTranscriptItems(bgLaunch);
+  s.noteTranscriptItems([bgNotif('failed')]);
+  s.applyHook({ hook_event_name: 'Stop' });
+  assert.equal(s.snap.state, 'done_unread');
+  m.killAll();
+});
+
+test('tâche de fond : /clear et mort du pty vident les tâches', async () => {
+  const m = new SessionManager(echoer);
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.noteTranscriptItems(bgLaunch);
+  s.applyHook({ hook_event_name: 'SessionEnd', reason: 'clear' });
+  assert.equal(s.bg.tasks.length, 0);
+  s.noteTranscriptItems(bgLaunch);
+  assert.equal(s.bg.tasks.length, 1);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  s.write('q');
+  await until(() => got.some((x) => x.type === 'exit'));
+  assert.equal(s.bg.tasks.length, 0);
+  assert.equal(s.snap.state, 'error');
   m.killAll();
 });

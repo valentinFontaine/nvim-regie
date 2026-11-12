@@ -196,3 +196,41 @@ test('TranscriptTail.kick : relecture immédiate puis rapide, sans attendre l\'i
   assert.equal(batches[0]?.text, 'vite', 'ligne lue en mode rapide');
   assert.ok(Date.now() - t < 500, 'lue en moins de 500 ms');
 });
+
+// Tâches de fond : lignes construites d'après les transcripts SRMix (7c93f6c3 L384/385, L168, L390, L604).
+const NOTIF = (id, status) => `<task-notification>\n<task-id>${id}</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n<output-file>C:\t\${id}.output</output-file>\n<status>${status}</status>\n<summary>Background command "x" ${status}</summary>\n</task-notification>`;
+
+test('toItems : tool_result d\'une tâche de fond → backgroundTaskId', () => {
+  const e = {
+    type: 'user', uuid: 'u1', toolUseResult: { backgroundTaskId: 'buzsci941' },
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'Command running in background with ID: buzsci941.' }] },
+  };
+  const [it] = toItems(e);
+  assert.equal(it.kind, 'tool_result');
+  assert.equal(it.backgroundTaskId, 'buzsci941');
+});
+
+test('toItems : tool_result ordinaire ou backgroundTaskId non conforme → pas de backgroundTaskId', () => {
+  const msg = { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] };
+  assert.equal(toItems({ type: 'user', message: msg })[0].backgroundTaskId, undefined);
+  assert.equal(toItems({ type: 'user', toolUseResult: { backgroundTaskId: '../x' }, message: msg })[0].backgroundTaskId, undefined);
+  assert.equal(toItems({ type: 'user', toolUseResult: 'texte', message: msg })[0].backgroundTaskId, undefined);
+});
+
+test('toItems : notification de fin de tâche (origin.kind) → origin, taskId, status', () => {
+  for (const status of ['completed', 'failed']) {
+    const e = { type: 'user', uuid: 'u2', origin: { kind: 'task-notification' }, message: { role: 'user', content: NOTIF('buzsci941', status) } };
+    const [it] = toItems(e);
+    assert.equal(it.kind, 'text');
+    assert.equal(it.origin, 'task-notification');
+    assert.equal(it.taskId, 'buzsci941');
+    assert.equal(it.status, status);
+  }
+});
+
+test('toItems : turnOrigin seul (résumé de compaction) ou vrai message → pas une notification', () => {
+  const compact = { type: 'user', turnOrigin: 'task_notification', message: { role: 'user', content: 'Résumé de la conversation' } };
+  assert.equal(toItems(compact)[0].origin, undefined);
+  const fake = { type: 'user', message: { role: 'user', content: NOTIF('abc', 'completed') } };
+  assert.equal(toItems(fake)[0].origin, undefined, 'sans origin.kind, un texte qui ressemble à une notification n\'en est pas une');
+});

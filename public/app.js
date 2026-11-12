@@ -2,7 +2,7 @@ import { renderMarkdown, toolTarget } from '/render.js';
 import { ansiSegments } from '/ansi.js';
 import {
   COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo, turnLine, writersIn, sessionName,
-  pastSessionAction, parseRoute, cardHref, placeTitle,
+  pastSessionAction, parseRoute, cardHref, placeTitle, bgBadge,
 } from '/dashboard.js';
 
 const status = document.getElementById('status');
@@ -221,6 +221,8 @@ function showState(msg) {
   stateEl.dataset.state = msg.state;
   stateEl.textContent = STATE_LABELS[msg.state] ?? msg.state;
   if (msg.activity) stateEl.textContent += ` · ${msg.activity}`;
+  const bgb = bgBadge(msg.bg, Date.now());
+  if (bgb) stateEl.textContent += ` · ${bgb.text}`;
   interruptBtn.disabled = msg.state !== 'running';
   updateLive(msg);
   if (msg.state === 'needs_you') setDrawer(true);
@@ -233,10 +235,17 @@ window.addEventListener('focus', () => {
 // ---------- Tableau de bord ----------
 
 let durEls = []; // [{el, since}] rafraîchis chaque seconde
+let bgEls = []; // [{el, tasks}] badges de tâches de fond, rafraîchis chaque seconde
 
 function tickDurations() {
   const now = Date.now();
   for (const d of durEls) d.el.textContent = d.since == null ? '' : formatDuration(now - d.since);
+  for (const b of bgEls) {
+    const badge = bgBadge(b.tasks, now);
+    if (!badge) continue;
+    b.el.textContent = badge.text;
+    b.el.classList.toggle('warn', badge.warn);
+  }
 }
 setInterval(tickDurations, 1000);
 
@@ -311,6 +320,12 @@ function makeCard(c) {
   durEls.push({ el: dur, since: c.state === 'stopped' ? null : c.since });
   a.append(head, el('div', 'label', STATE_LABELS[c.state] ?? c.state));
   if (c.activity) a.append(el('div', 'act', c.activity));
+  const badge = bgBadge(c.bg, Date.now());
+  if (badge) {
+    const b = el('div', `bg${badge.warn ? ' warn' : ''}`, badge.text);
+    bgEls.push({ el: b, tasks: c.bg });
+    a.append(b);
+  }
   if (c.excerpt) a.append(el('div', 'exc', c.excerpt));
   if (c.note) a.append(noteBlock(c));
   a.onclick = () => openCard(c);
@@ -320,6 +335,7 @@ function makeCard(c) {
 
 function renderDash() {
   durEls = [];
+  bgEls = [];
   const g = groupByColumn(cards);
   const cols = COLUMNS.map((c) => {
     const col = el('section', `col ${c.id}`);
