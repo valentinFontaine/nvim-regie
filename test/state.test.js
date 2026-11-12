@@ -151,3 +151,33 @@ test('afterStop : sans tâche de fond → done_unread ; avec → running sans ac
   const bg = trackBg(initialBg(), [launch('t1', 'x'), started('t1', 'b1')], 1);
   assert.deepEqual(afterStop(running, bg), { state: 'running', activity: '' });
 });
+
+// ── Lancements détachés (nohup … &) ──
+const SRMIX = 'nohup $PY -I -u render_scenes.py > /tmp/render_all.log 2>&1 &\necho lancé';
+const fgResult = (id) => ({ kind: 'tool_result', role: 'user', toolUseId: id, text: 'lancé' });
+const bashFg = (id, command) => ({ kind: 'tool_use', role: 'assistant', toolUseId: id, name: 'Bash', input: { command } });
+
+test('trackBg : un Bash détaché (nohup … &) ouvre aussitôt une tâche avec la cible', () => {
+  let bg = trackBg(initialBg(), [bashFg('t1', SRMIX)], 1000);
+  assert.deepEqual(bg.tasks, [], 'rien tant que le résultat n\'est pas là');
+  bg = trackBg(bg, [fgResult('t1')], 1500);
+  assert.equal(bg.tasks.length, 1);
+  assert.equal(bg.tasks[0].id, 'd:t1');
+  assert.equal(bg.tasks[0].label, 'render_scenes.py');
+  assert.equal(bg.tasks[0].target, 'render_scenes.py');
+  assert.equal(bg.tasks[0].since, 1500);
+  assert.deepEqual(afterStop({ state: 'running', activity: '' }, bg), { state: 'running', activity: '' });
+});
+
+test('trackBg : proc-end ferme la tâche détachée', () => {
+  let bg = trackBg(initialBg(), [bashFg('t1', SRMIX), fgResult('t1')], 1);
+  bg = trackBg(bg, [{ kind: 'proc-end', id: 'd:t1' }], 2);
+  assert.deepEqual(bg.tasks, []);
+});
+
+test('trackBg : un Bash chaîné par && ou sans fichier n\'ouvre rien ; run_in_background reste une tâche normale', () => {
+  let bg = trackBg(initialBg(), [bashFg('t1', 'cd x && python a.py'), fgResult('t1'), bashFg('t2', 'nohup sleep 9 &'), fgResult('t2')], 1);
+  assert.deepEqual(bg.tasks, []);
+  bg = trackBg(initialBg(), [{ ...bashFg('t3', 'python z.py &'), input: { command: 'python z.py &', run_in_background: true } }, started('t3', 'b9')], 1);
+  assert.deepEqual(bg.tasks.map((t) => t.id), ['b9'], 'pas de doublon détaché');
+});

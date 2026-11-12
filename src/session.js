@@ -5,6 +5,7 @@ import { TranscriptTail } from './transcript.js';
 import { NvimBridge, pasteSequence } from './nvim.js';
 import { cleanEnv } from './env.js';
 import { readBranch } from './git.js';
+import { findLive } from './procs.js';
 import { initialState, next as nextState, markRead as markReadState, ptyExited, interrupted, isInterruptItem, initialBg, trackBg, afterStop } from './state.js';
 
 const MAX_EXCERPT = 200;
@@ -58,6 +59,10 @@ function checkDim(n, max, nom) {
   if (!Number.isInteger(n) || n < 1 || n > max) throw new RangeError(`${nom} invalide`);
 }
 
+const PROBE_INTERVAL_MS = 10_000;
+const PROBE_GRACE_MS = 15_000;
+const PROBE_SLACK_MS = 60_000; // le processus peut précéder de peu le résultat observé dans le transcript
+
 export class Session {
   /**
    * `resume` : id d'une session claude passée à reprendre (`--resume`) ; l'id des hooks (`this.id`) reste propre à ce pty.
@@ -78,6 +83,9 @@ export class Session {
     this.claudeId = resume ? resume.toLowerCase() : this.id;
     this.snap = initialState();
     this.bg = initialBg();
+    this.heldByBg = false;
+    this.probeTimer = null;
+    this.probing = false;
     this.since = Date.now();
     this.excerpt = '';
     this.buffer = '';
@@ -102,6 +110,7 @@ export class Session {
       this.exited = true;
       this.exitCode = exitCode;
       this.bg = initialBg();
+      this.#syncProbe();
       this.#setSnap(ptyExited(this.snap));
       this.#emit({ type: 'exit', code: exitCode });
       // Laisse au suivi le temps de lire les dernières lignes écrites avant la sortie.
@@ -220,6 +229,8 @@ export class Session {
       excerpt = '';
     }
     const snap = payload.hook_event_name === 'Stop' ? afterStop(this.snap, this.bg) : nextState(this.snap, payload);
+    // Le Stop tenu en « running » par une tâche ouverte : sa fin (sonde) doit conclure le tour.
+    this.heldByBg = payload.hook_event_name === 'Stop' && this.bg.tasks.length > 0 && snap.state === 'running';
     this.#setSnap(snap, excerpt);
     // /clear et /resume : SessionStart n'existe pas en HTTP, SessionEnd arrive avec reason (mesuré).
     if (payload.hook_event_name === 'SessionEnd' && (payload.reason === 'clear' || payload.reason === 'resume')) {
@@ -230,7 +241,7 @@ export class Session {
   /** Esc en plein tour : pas de hook, mais le transcript porte « [Request interrupted by user] ». */
   noteTranscriptItems(batch) {
     const bg = trackBg(this.bg, batch);
-    if (bg !== this.bg) { this.bg = bg; this.#setSnap(this.snap, this.excerpt); }
+    if (bg !== this.bg) { this.bg = bg; this.#setSnap(this.snap, this.excerpt); this.#syncProbe(); }
     // La notification de fin d'une tâche relance un tour de claude (mesuré) : « en cours » jusqu'au Stop suivant.
     if (batch.some((it) => it.origin === 'task-notification' && it.taskId)
       && this.snap.state !== 'error' && this.snap.state !== 'running') {
@@ -239,11 +250,48 @@ export class Session {
     if (batch.some(isInterruptItem)) this.#setSnap(interrupted(this.snap));
   }
 
+  /** Sonde périodique : tourne seulement tant qu'une tâche détachée (nohup … &) est ouverte. */
+  #syncProbe() {
+    const need = !this.exited && this.bg.tasks.some((t) => t.detached);
+    if (!need) {
+      if (this.probeTimer) clearInterval(this.probeTimer);
+      this.probeTimer = null;
+      return;
+    }
+    if (this.probeTimer) return;
+    this.probeTimer = setInterval(() => this.#probeDetached(), this.spec.probeIntervalMs ?? PROBE_INTERVAL_MS);
+    this.probeTimer.unref?.();
+  }
+
+  async #probeDetached() {
+    if (this.probing) return;
+    this.probing = true;
+    try {
+      const probe = this.spec.probe ?? findLive;
+      const grace = this.spec.probeGraceMs ?? PROBE_GRACE_MS;
+      for (const t of this.bg.tasks.filter((x) => x.detached && Date.now() - x.since >= grace)) {
+        const alive = await probe(t.target, t.since - PROBE_SLACK_MS).catch(() => null);
+        if (alive !== false || !this.bg.tasks.some((x) => x.id === t.id)) continue;
+        this.bg = trackBg(this.bg, [{ kind: 'proc-end', id: t.id }]);
+        if (!this.bg.tasks.length && this.heldByBg && this.snap.state === 'running') {
+          this.heldByBg = false;
+          this.#setSnap({ state: 'done_unread', activity: '' });
+        } else {
+          this.#setSnap(this.snap, this.excerpt);
+        }
+      }
+    } finally {
+      this.probing = false;
+      this.#syncProbe();
+    }
+  }
+
   #resetConversation() {
     this.items = [];
     this.pending = null;
     this.answer = '';
     this.bg = initialBg();
+    this.#syncProbe();
     this.#emit({ type: 'transcript-reset' });
   }
 

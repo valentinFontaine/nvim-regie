@@ -1,7 +1,9 @@
 // Machine à états d'une session, alimentée par les hooks de Claude Code. Fonctions pures :
 // un « instantané » {state, activity} entre, un nouvel instantané sort (le même objet si rien ne change).
 
-export const STATES = ['running', 'needs_you', 'done_unread', 'idle', 'error'];
+import { detachedTarget } from './detached.js';
+
+export const STATES =['running', 'needs_you', 'done_unread', 'idle', 'error'];
 
 const MAX_ACTIVITY = 80;
 
@@ -69,7 +71,16 @@ export function trackBg(bg, items, now = Date.now()) {
       launch = { ...launch, [it.toolUseId]: label };
       const keys = Object.keys(launch);
       if (keys.length > MAX_LAUNCHES) launch = Object.fromEntries(keys.slice(-MAX_LAUNCHES).map((k) => [k, launch[k]]));
-    } else if (it.kind === 'tool_result' && it.backgroundTaskId && launch[it.toolUseId] !== undefined) {
+    } else if (it.kind === 'tool_use' && it.name === 'Bash' && typeof it.toolUseId === 'string' && detachedTarget(it.input?.command)) {
+      // Lancement détaché dans un Bash ordinaire (nohup … &) : la tâche s'ouvre au résultat, la sonde de processus la ferme.
+      launch = { ...launch, [it.toolUseId]: { target: detachedTarget(it.input.command) } };
+    } else if (it.kind === 'tool_result' && !it.backgroundTaskId && launch[it.toolUseId]?.target) {
+      const { [it.toolUseId]: d, ...rest } = launch;
+      launch = rest;
+      tasks = [...tasks, { id: `d:${it.toolUseId}`, label: d.target, target: d.target, detached: true, since: now }];
+    } else if (it.kind === 'proc-end' && typeof it.id === 'string') {
+      tasks = tasks.filter((t) => t.id !== it.id);
+    } else if (it.kind === 'tool_result' && it.backgroundTaskId && typeof launch[it.toolUseId] === 'string') {
       const { [it.toolUseId]: label, ...rest } = launch;
       launch = rest;
       tasks = [...tasks.filter((t) => t.id !== it.backgroundTaskId), { id: it.backgroundTaskId, label, since: now }];

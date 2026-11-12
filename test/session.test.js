@@ -596,3 +596,68 @@ test('tâche de fond : /clear et mort du pty vident les tâches', async () => {
   assert.equal(s.snap.state, 'error');
   m.killAll();
 });
+
+// ── Lancements détachés (nohup … &) : sonde de processus injectée ──
+const detLaunch = [
+  { kind: 'tool_use', role: 'assistant', toolUseId: 'd1', name: 'Bash', input: { command: 'nohup python -u render_scenes.py > r.log 2>&1 &\necho lancé' } },
+  { kind: 'tool_result', role: 'user', toolUseId: 'd1', text: 'lancé' },
+];
+const detSpec = (probe) => ({ ...echoer, probe, probeIntervalMs: 20, probeGraceMs: 0 });
+
+test('détaché : le Stop est tenu en running, la sonde voit le processus, puis sa fin donne done_unread', async () => {
+  let alive = true;
+  const calls = [];
+  const m = new SessionManager(detSpec(async (target, since) => { calls.push([target, since]); return alive; }));
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+  s.noteTranscriptItems(detLaunch);
+  s.applyHook({ hook_event_name: 'Stop' });
+  assert.equal(s.snap.state, 'running');
+  assert.equal(s.bg.tasks[0].label, 'render_scenes.py');
+  await until(() => calls.length >= 2, 2000);
+  assert.equal(calls[0][0], 'render_scenes.py');
+  assert.equal(s.snap.state, 'running', 'tant que le processus vit');
+  alive = false;
+  await until(() => s.bg.tasks.length === 0, 2000);
+  assert.equal(s.snap.state, 'done_unread');
+  m.killAll();
+});
+
+test('détaché : sonde impossible (null) → la tâche reste ouverte ; nouveau prompt → plus de maintien', async () => {
+  const calls = [];
+  const m = new SessionManager(detSpec(async () => { calls.push(1); return null; }));
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.noteTranscriptItems(detLaunch);
+  s.applyHook({ hook_event_name: 'Stop' });
+  await until(() => calls.length >= 2, 2000);
+  assert.equal(s.bg.tasks.length, 1);
+  s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+  assert.equal(s.snap.state, 'running');
+  m.killAll();
+});
+
+test('détaché : la fin du processus pendant un tour en cours ne conclut pas ce tour', async () => {
+  let alive = true;
+  const m = new SessionManager(detSpec(async () => alive));
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.applyHook({ hook_event_name: 'UserPromptSubmit' });
+  s.noteTranscriptItems(detLaunch);
+  alive = false;
+  await until(() => s.bg.tasks.length === 0, 2000);
+  assert.equal(s.snap.state, 'running');
+  m.killAll();
+});
+
+test('détaché : /clear arrête la sonde et vide les tâches', async () => {
+  let n = 0;
+  const m = new SessionManager(detSpec(async () => { n++; return true; }));
+  const s = m.start({ name: 'p', path: process.cwd() }, 80, 24);
+  s.noteTranscriptItems(detLaunch);
+  await until(() => n >= 1, 2000);
+  s.applyHook({ hook_event_name: 'SessionEnd', reason: 'clear' });
+  assert.equal(s.bg.tasks.length, 0);
+  const seen = n;
+  await new Promise((r) => setTimeout(r, 120));
+  assert.ok(n - seen <= 1, 'plus de sonde après /clear');
+  m.killAll();
+});

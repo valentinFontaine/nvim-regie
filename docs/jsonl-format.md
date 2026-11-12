@@ -78,3 +78,22 @@ pendant que la tâche tourne : la régie suit donc les tâches elle-même (`src/
 - Les mêmes notifications existent aussi en `queue-operation` et `attachment/queued_command` (ignorés).
 - Non établi : valeur `killed` de `status` ; comportement à la fermeture de la session avec des tâches ouvertes ;
   si un hook part au réveil par notification (la régie n'en dépend pas).
+
+## Lancements détachés (`nohup … &` dans un Bash ordinaire)
+
+Constaté le 2026-11-12 (SRMix) : un agent lance un long calcul par `nohup python -I -u render_scenes.py > log 2>&1 &`
+dans un Bash au premier plan (pas de `run_in_background`). Le transcript ne contient alors **aucune** tâche de fond :
+le `Stop` arrive, et le processus survit, orphelin (son `bash` parent est mort) : il n'est **pas** un descendant du
+pty de `claude`, donc l'arbre de processus ne le voit pas.
+
+Détection croisée (`src/detached.js`, `src/procs.js`, `trackBg`, `Session#probeDetached`) :
+- le transcript dit *quoi* : `detachedTarget(command)` repère `nohup`, un `&` final, `Start-Process`, `start /b` et en tire
+  le nom de fichier lancé (`render_scenes.py`) ; la tâche s'ouvre dès le `tool_result` (id `d:<toolUseId>`) ;
+- les processus disent *jusqu'à quand* : toutes les 10 s (seulement si une tâche détachée est ouverte, après 15 s de grâce),
+  une sonde PowerShell/CIM cherche un processus vivant dont la ligne de commande contient la cible. Absent → la tâche
+  se ferme ; si la session était tenue « en cours » par le `Stop`, elle passe `done_unread` (aucune notification ne
+  réveille l'agent pour un processus détaché).
+
+Limites assumées : commande détachée sans nom de fichier reconnaissable (`nohup sleep 100 &`) non détectée ; un autre
+processus de la machine portant le même nom de fichier prolonge la tâche à tort (badge orange après 2 min) ; sonde
+impossible (hors Windows, délai) = tâche laissée ouverte.
