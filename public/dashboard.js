@@ -8,10 +8,17 @@ export const COLUMNS = [
 ];
 
 /** Colonne d'une carte. `error` attire l'attention ; `stopped` (non lancé) et inconnu sont au repos. */
-export function columnOf(state) {
+export function columnOf(state, draft = false) {
   if (state === 'needs_you' || state === 'error') return 'needs_you';
   if (state === 'running' || state === 'done_unread') return state;
+  // Brouillon en cours dans Neovim : la session reste visible parmi les « terminé, non lu ».
+  if (state === 'idle' && draft === true) return 'done_unread';
   return 'idle';
+}
+
+/** Badge « brouillon » d'une carte (buffer de prompt non vide) : {text} ou null. */
+export function draftBadge(card) {
+  return card && card.draft === true ? { text: '✎ brouillon' } : null;
 }
 
 // Depuis le plus ancien `since` (attente la plus longue) ; sans `since` en dernier ; égalités par projet puis key.
@@ -62,7 +69,7 @@ export function sessionName(c) {
 
 export function groupByColumn(cards) {
   const g = Object.fromEntries(COLUMNS.map((c) => [c.id, []]));
-  for (const c of cards) g[columnOf(c.state)].push(c);
+  for (const c of cards) g[columnOf(c.state, c.draft)].push(c);
   for (const id of Object.keys(g)) g[id].sort(byAge);
   return g;
 }

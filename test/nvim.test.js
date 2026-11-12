@@ -71,6 +71,35 @@ test('NvimBridge : envoi du buffer, vidage, réponse en lecture seule', { skip: 
   }
 });
 
+test('NvimBridge : brouillon notifié au changement seulement (non vide / vide / envoi)', { skip: !haveNvim }, async () => {
+  const drafts = [];
+  const bridge = new NvimBridge({
+    path: NVIM, lua: LUA, sendKey: '<F9>', extraArgs: ['--clean'], id: `draft-${process.pid}`,
+    cols: 100, rows: 30, cwd: process.cwd(),
+    onSend: () => {}, onDraft: (v) => drafts.push(v),
+    onData: () => {}, onExit: () => {},
+  });
+  try {
+    await bridge.ready;
+    const nvim = bridge.nvim;
+    const buf = await nvim.buffer;
+    const set = (lines) => buf.setLines(lines, { start: 0, end: -1, strictIndexing: false });
+    await set(['  ', '']);
+    await wait(300);
+    assert.deepEqual(drafts, [], 'lignes blanches : pas de brouillon');
+    await set(['un mot']);
+    await until(() => drafts.length === 1);
+    await set(['un mot de plus']);
+    await wait(300);
+    assert.deepEqual(drafts, [true], 'pas de nouvelle notification tant que rien ne change');
+    await pressSend(nvim);
+    await until(() => drafts.length === 2);
+    assert.deepEqual(drafts, [true, false], "l'envoi vide le buffer");
+  } finally {
+    bridge.kill();
+  }
+});
+
 test('Session : le prompt Nvim arrive dans le pty de claude en bracketed paste puis \\r', { skip: !haveNvim }, async () => {
   const fake = "process.stdin.setRawMode&&process.stdin.setRawMode(true);"
     + "process.stdin.on('data',d=>process.stdout.write('GOT:'+JSON.stringify(String(d))+'\\n'));"

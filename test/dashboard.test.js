@@ -179,3 +179,24 @@ test('bgBadge : orange seulement au-delà de 2 min (la plus ancienne), tâche sa
   assert.equal(bgBadge([{ id: 'a', label: 'x', since: 0 }], 120_001).warn, true);
   assert.equal(bgBadge([{ id: 'a', since: 0 }], 1000).text, '⏳ tâche de fond · 1 s');
 });
+
+// ── Brouillon Neovim ──
+import { draftBadge } from '../public/dashboard.js';
+
+test('brouillon : une carte au repos avec brouillon va dans « Terminé, non lu » ; les autres états gardent leur colonne', () => {
+  assert.equal(columnOf('idle', true), 'done_unread');
+  assert.equal(columnOf('idle', false), 'idle');
+  assert.equal(columnOf('running', true), 'running');
+  assert.equal(columnOf('needs_you', true), 'needs_you');
+  assert.equal(columnOf('stopped', true), 'idle', 'non lancée : pas de brouillon qui compte');
+  const g = groupByColumn([{ key: 'a', project: 'p', state: 'idle', draft: true, since: 1 }, { key: 'b', project: 'p', state: 'idle', since: 1 }]);
+  assert.deepEqual(g.done_unread.map((c) => c.key), ['a']);
+  assert.deepEqual(g.idle.map((c) => c.key), ['b']);
+});
+
+test('draftBadge : seulement si draft === true', () => {
+  assert.deepEqual(draftBadge({ draft: true }), { text: '✎ brouillon' });
+  assert.equal(draftBadge({ draft: false }), null);
+  assert.equal(draftBadge({}), null);
+  assert.equal(draftBadge(null), null);
+});

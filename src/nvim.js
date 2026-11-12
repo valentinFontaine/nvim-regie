@@ -40,10 +40,11 @@ function tryConnect(address) {
 
 /** Un nvim (pty + RPC) lié à une session. Ne construit jamais de commande à partir de données reçues. */
 export class NvimBridge {
-  constructor({ path: nvimPath, lua, sendKey, id, cols, rows, cwd, extraArgs = [], onSend, onData, onExit }) {
+  constructor({ path: nvimPath, lua, sendKey, id, cols, rows, cwd, extraArgs = [], onSend, onDraft = () => {}, onData, onExit }) {
     if (!SAFE_ID.test(id)) throw new Error('id nvim invalide');
     this.address = pipeName(id);
     this.onSend = onSend;
+    this.onDraft = onDraft;
     this.nvim = null;
     this.killed = false;
     this.pty = pty.spawn(nvimPath, ['--listen', this.address, ...extraArgs, '--cmd', 'lua dofile(vim.env.REGIE_LUA)'], {
@@ -77,7 +78,10 @@ export class NvimBridge {
     this.sock = sock;
     sock.on('error', () => {});
     const nvim = attach({ reader: sock, writer: sock });
-    nvim.on('notification', (method) => { if (method === 'regie_send') this.#send().catch(() => {}); });
+    nvim.on('notification', (method, args) => {
+      if (method === 'regie_send') this.#send().catch(() => {});
+      else if (method === 'regie_draft' && Array.isArray(args) && typeof args[0] === 'boolean') this.onDraft(args[0]);
+    });
     nvim.on('request', (_m, _a, resp) => resp.send('non géré', true));
     this.nvim = nvim;
     // Attend que le Lua du projet ait fini son VimEnter (buffer de prompt prêt).

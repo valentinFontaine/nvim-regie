@@ -37,3 +37,10 @@
 - Parseur : item `{kind: "turn", role: "system", durationMs}` ; rendu `✻ 1 min 8 s · fini à 09:34` (arrondi à la seconde comme le terminal).
 - Pendant le tour (état `running` / `needs_you`) : `✻ En cours… 12 s · <activité du hook PreToolUse>`, rafraîchie chaque seconde, toujours en bas de la conversation.
 - Au `Stop`, ligne provisoire calculée côté navigateur, remplacée par `turn_duration` quand il arrive (repli si absent).
+
+### Brouillon Neovim sur la carte
+- Problème : j'ouvre une session terminée (→ « au repos »), j'écris un début de réponse dans Neovim, je pars ailleurs : la carte est indiscernable d'une session sans rien à faire.
+- `nvim/regie.lua` : `nvim_buf_attach` sur le buffer de prompt ; au changement seulement (au moins une ligne non blanche ↔ vide), `rpcnotify 'regie_draft'` (booléen). Le vidage après envoi notifie `false`.
+- `Session.draft` (booléen indépendant de la machine à états, repassé à `false` à la mort de nvim), porté par le message d'état et les cartes.
+- Tableau de bord : `idle` + brouillon ⇒ colonne « Terminé, non lu » ; `running` / `needs_you` gardent leur colonne ; badge violet « ✎ brouillon » sur la carte et dans la barre de session.
+- Limite : le brouillon vit dans le pty de Neovim côté serveur ; redémarrer le serveur le perd, comme la session.

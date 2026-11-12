@@ -2,7 +2,7 @@ import { renderMarkdown, toolTarget } from '/render.js';
 import { ansiSegments } from '/ansi.js';
 import {
   COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo, turnLine, writersIn, sessionName,
-  pastSessionAction, parseRoute, cardHref, placeTitle, bgBadge,
+  pastSessionAction, parseRoute, cardHref, placeTitle, bgBadge, draftBadge,
 } from '/dashboard.js';
 
 const status = document.getElementById('status');
@@ -223,6 +223,8 @@ function showState(msg) {
   if (msg.activity) stateEl.textContent += ` · ${msg.activity}`;
   const bgb = bgBadge(msg.bg, Date.now());
   if (bgb) stateEl.textContent += ` · ${bgb.text}`;
+  const db = draftBadge(msg);
+  if (db) stateEl.textContent += ` · ${db.text}`;
   interruptBtn.disabled = msg.state !== 'running';
   updateLive(msg);
   if (msg.state === 'needs_you') setDrawer(true);
@@ -326,6 +328,8 @@ function makeCard(c) {
     bgEls.push({ el: b, tasks: c.bg });
     a.append(b);
   }
+  const draft = draftBadge(c);
+  if (draft) a.append(el('div', 'draft', draft.text));
   if (c.excerpt) a.append(el('div', 'exc', c.excerpt));
   if (c.note) a.append(noteBlock(c));
   a.onclick = () => openCard(c);

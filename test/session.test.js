@@ -335,7 +335,7 @@ test('subscribeAll : liste à l\'abonnement (projets sans session = stopped), pu
   const a = last().find((x) => x.project === 'a');
   assert.equal(a.state, 'running');
   assert.equal(a.activity, 'Bash ls');
-  assert.deepEqual(Object.keys(a).sort(), ['activity', 'bg', 'branch', 'chantier', 'excerpt', 'id', 'key', 'label', 'mode', 'project', 'since', 'state']);
+  assert.deepEqual(Object.keys(a).sort(), ['activity', 'bg', 'branch', 'chantier', 'draft', 'excerpt', 'id', 'key', 'label', 'mode', 'project', 'since', 'state']);
   assert.equal(a.key, s.id);
   assert.equal(a.id, s.id);
   assert.equal(last().find((x) => x.project === 'b').key, 'p:b');
@@ -659,5 +659,31 @@ test('détaché : /clear arrête la sonde et vide les tâches', async () => {
   const seen = n;
   await new Promise((r) => setTimeout(r, 120));
   assert.ok(n - seen <= 1, 'plus de sonde après /clear');
+  m.killAll();
+});
+
+// ── Brouillon Neovim ──
+test('brouillon : setDraft est porté par le message d\'état et par la carte, retiré quand le buffer se vide', () => {
+  const m = new SessionManager(echoer);
+  const pa = { name: 'a', path: process.cwd() };
+  const lists = [];
+  m.subscribeAll((msg) => lists.push(msg), [pa]);
+  const s = m.start(pa, 80, 24);
+  const got = [];
+  s.subscribe((msg) => got.push(msg));
+  const card = () => lists.at(-1).sessions.find((x) => x.project === 'a');
+  assert.equal(s.draft, false);
+  assert.equal(card().draft, false);
+  s.setDraft(true);
+  assert.equal(got.filter((x) => x.type === 'state').at(-1).draft, true);
+  assert.equal(card().draft, true);
+  const n = got.length;
+  s.setDraft(true); // inchangé : aucun nouveau message
+  s.setDraft('oui'); // non booléen : ignoré
+  assert.equal(got.length, n);
+  assert.equal(s.draft, true);
+  s.setDraft(false);
+  assert.equal(got.filter((x) => x.type === 'state').at(-1).draft, false);
+  assert.equal(card().draft, false);
   m.killAll();
 });

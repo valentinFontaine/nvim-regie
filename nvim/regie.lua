@@ -28,6 +28,24 @@ local function setup()
     if vim.g.regie_chan then vim.rpcnotify(vim.g.regie_chan, 'regie_send') end
   end, { desc = 'nvim-regie : envoyer le prompt' })
 
+  -- Brouillon : prévient le serveur quand le buffer de prompt devient non vide (ou se vide), seulement au changement.
+  local had_draft = false
+  vim.api.nvim_buf_attach(prompt, false, {
+    on_lines = function()
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(prompt) then return end
+        local has = false
+        for _, l in ipairs(vim.api.nvim_buf_get_lines(prompt, 0, -1, false)) do
+          if l:find('%S') then has = true break end
+        end
+        if has ~= had_draft and vim.g.regie_chan then
+          had_draft = has
+          vim.rpcnotify(vim.g.regie_chan, 'regie_draft', has)
+        end
+      end)
+    end,
+  })
+
   local prompt_win = vim.api.nvim_get_current_win()
   vim.wo[prompt_win].winbar = ' Prompt : ' .. send_key .. ' envoie à Claude (pas de :w, rien à sauvegarder)'
 

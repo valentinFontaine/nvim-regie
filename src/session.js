@@ -84,6 +84,7 @@ export class Session {
     this.snap = initialState();
     this.bg = initialBg();
     this.heldByBg = false;
+    this.draft = false;
     this.probeTimer = null;
     this.probing = false;
     this.since = Date.now();
@@ -155,6 +156,7 @@ export class Session {
         rows,
         cwd: this.project.path,
         onSend: (text) => this.sendPrompt(text),
+        onDraft: (value) => this.setDraft(value),
         onData: (data) => {
           this.nvimBuffer += data;
           if (this.nvimBuffer.length > MAX_BUFFER) this.nvimBuffer = this.nvimBuffer.slice(-MAX_BUFFER);
@@ -162,6 +164,7 @@ export class Session {
         },
         onExit: (code) => {
           this.nvimExit = code;
+          this.setDraft(false);
           this.#emit({ type: 'nvim-exit', code });
         },
       });
@@ -205,7 +208,15 @@ export class Session {
   }
 
   #stateMsg() {
-    return { type: 'state', state: this.snap.state, activity: this.snap.activity, since: this.since, excerpt: this.excerpt, bg: this.bg.tasks };
+    return { type: 'state', state: this.snap.state, activity: this.snap.activity, since: this.since, excerpt: this.excerpt, bg: this.bg.tasks, draft: this.draft };
+  }
+
+  /** Le buffer de prompt de Neovim contient (ou non) un brouillon : indépendant de la machine à états. */
+  setDraft(value) {
+    if (typeof value !== 'boolean' || value === this.draft) return;
+    this.draft = value;
+    this.#emit(this.#stateMsg());
+    if (this.onChange) this.onChange();
   }
 
   #setSnap(snap, excerpt) {
@@ -386,11 +397,11 @@ export class SessionManager {
     const list = [];
     const card = (s, p, chantier, branch) => ({
       key: s.id, id: s.id, project: p.name, chantier, branch, mode: s.mode, label: s.label,
-      state: s.snap.state, activity: s.snap.activity, since: s.since, excerpt: s.excerpt, bg: s.bg.tasks,
+      state: s.snap.state, activity: s.snap.activity, since: s.since, excerpt: s.excerpt, bg: s.bg.tasks, draft: s.draft,
     });
     const stopped = (key, p, chantier, branch) => ({
       key, id: null, project: p.name, chantier, branch, mode: null, label: '',
-      state: 'stopped', activity: '', since: null, excerpt: '', bg: [],
+      state: 'stopped', activity: '', since: null, excerpt: '', bg: [], draft: false,
     });
     // Extrait de la note d'un chantier (carte de chantier seulement, jamais le dossier principal).
     const withNote = (c, p) => (this.spec.chantierNote ? { ...c, note: this.spec.chantierNote(p, c.branch) ?? '' } : c);
