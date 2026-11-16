@@ -49,3 +49,9 @@
 - Source principale : le JSON que `claude` donne à la statusLine (`model.id`, `model.display_name`), lu par le relais (`scripts/statusline-relay.mjs`) et posté avec le texte ; il suit donc `/model`.
 - Repli : le champ `message.model` des réponses du transcript (id brut, `<synthetic>` ignoré), utilisé avant la première statusLine, ou si le modèle des réponses diffère. Le nom lisible est gardé quand l'id est le même.
 - `Session.model` → champ `model` du message d'état (chaîne affichable) ; pastille `#model` dans l'en-tête, visible seulement dans la vue session.
+
+### Bandeau « Serveur arrêté »
+- Problème (2026-11-16) : fermer la fenêtre de la régie arrête le serveur, mais la page reste affichée ; un clic sur une carte ouvre une vue qui attend indéfiniment, comme une session « qui ne se charge pas ». Seul indice : « déconnecté » dans la barre d'état.
+- Mesuré au passage (banc WebSocket, reprise de sessions de 4,6 et 44 Mo) : conversation affichée en ~1 s, Neovim ~4,4 s, interface de `claude` ~5,8 s, indépendamment de la taille du transcript.
+- `ws.onclose` : bandeau rouge `#offline` sous l'en-tête et classe `offline` sur `body` (tableau de bord et vue session grisés, non cliquables).
+- Pas de reconnexion automatique : le jeton est régénéré à chaque démarrage, on rouvre la page depuis le lien du serveur relancé.

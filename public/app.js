@@ -844,7 +844,12 @@ function connect() {
       if (currentId === null && picker.hidden) openPicker(); // démarrage refusé (étiquette invalide…) : retour au choix
     }
   };
-  ws.onclose = () => { status.textContent = 'déconnecté'; };
+  ws.onclose = () => {
+    // Serveur arrêté : la page reste affichée mais ne recevra plus rien. Pas de reconnexion (le jeton change au redémarrage).
+    status.textContent = 'déconnecté';
+    document.getElementById('offline').hidden = false;
+    document.body.classList.add('offline');
+  };
 }
 
 term.onData((data) => send({ type: 'input', data }));
