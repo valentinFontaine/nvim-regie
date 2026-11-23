@@ -66,7 +66,7 @@ La liste des projets reste fermée (`config.json`), mais elle s'alimente depuis 
 - WebSocket : `list-candidates` → `candidates` ; `add-project {path}` → `project-added`. Le client ne désigne qu'un chemin : le serveur le retrouve dans SA liste recalculée, sinon « dossier non proposé ». Le nom est celui du serveur. Le projet est ajouté au tableau `config.projects` existant (les abonnés du flux global le gardent par référence), puis le flux est renotifié : pas de redémarrage.
 - Interface : bouton « + Dossier » (tableau de bord), dialogue de liste, puis confirmation (nom + chemin) avant l'écriture.
 
-## Retrait d'un dossier depuis l'interface (fait, à valider à la main)
+## Retrait d'un dossier depuis l'interface (fait et validé à la main, 2026-11-23)
 
 Pour désencombrer le tableau de bord des projets finis ou en pause.
 - Bouton « Retirer » sur la carte du **dossier principal** d'un projet, affiché seulement quand aucune session n'y tourne (dossier ou chantier). Dialogue « ⚠ Attention » ; le focus est sur « Annuler » ; il signale les chantiers (worktrees) qui deviendront invisibles.
