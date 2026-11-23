@@ -23,6 +23,7 @@ const CANDIDATES = [
 ];
 const candidatesCalls = [];
 const saved = [];
+const dropped = [];
 let failSave = false;
 const pastCalls = [];
 const chantiers = {
@@ -62,6 +63,7 @@ before(async () => {
       saved.push(p);
       return p;
     },
+    dropProject: (name) => { dropped.push(name); },
     chantierNote: (p, branch) => (p.name === 'demo' && branch === 'x' ? '**Objectif** : o\n\ntexte' : null),
     pastSessions: (place) => {
       pastCalls.push(place);
@@ -549,5 +551,44 @@ test('WS : add-project, erreur d\'écriture → message d\'erreur, projet non aj
   assert.match(msgs.find((m) => m.type === 'error').message, /disque plein/);
   assert.ok(!msgs.some((m) => m.type === 'sessions' && m.sessions.some((c) => c.project === CANDIDATES[1].name)));
   failSave = false;
+  ws.close();
+});
+
+// Retrait d'un dossier : refusé s'il reste une session vivante (dossier principal ou chantier) ou si c'est le dernier.
+test('WS : remove-project refusé si session vivante, sinon retiré de la config et du flux ; jamais le dernier', async () => {
+  closeAll();
+  dropped.length = 0;
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'add-project', path: CANDIDATES[1].path }));
+  await waitFor(() => msgs.some((m) => m.type === 'project-added' && m.name === 'cand-deux'));
+  const errors = () => msgs.filter((m) => m.type === 'error').length;
+  // Session vivante dans un chantier du projet : refus.
+  const s = sessions.start({ name: 'cand-deux', path: WT_PATH, chantier: 'w' }, 80, 24);
+  ws.send(JSON.stringify({ type: 'remove-project', project: 'cand-deux' }));
+  await waitFor(() => errors() >= 1);
+  assert.match(msgs.filter((m) => m.type === 'error').at(-1).message, /session/);
+  assert.deepEqual(dropped, []);
+  // Inconnu ou mal formé : refus.
+  for (const bad of ['inexistant', 42, null]) ws.send(JSON.stringify({ type: 'remove-project', project: bad }));
+  await waitFor(() => errors() >= 4);
+  assert.deepEqual(dropped, []);
+  sessions.close(s.id);
+  ws.send(JSON.stringify({ type: 'remove-project', project: 'cand-deux' }));
+  await waitFor(() => msgs.some((m) => m.type === 'project-removed'));
+  assert.deepEqual(msgs.find((m) => m.type === 'project-removed'), { type: 'project-removed', name: 'cand-deux' });
+  assert.deepEqual(dropped, ['cand-deux']);
+  await waitFor(() => msgs.filter((m) => m.type === 'sessions').at(-1).sessions.every((c) => c.project !== 'cand-deux'));
+  // Il redevient candidat à l'ajout.
+  ws.send(JSON.stringify({ type: 'list-candidates' }));
+  await waitFor(() => msgs.filter((m) => m.type === 'candidates').at(-1)?.candidates.some((c) => c.name === 'cand-deux'));
+  // Retirer tous les autres, puis le dernier : refusé.
+  const others = msgs.filter((m) => m.type === 'sessions').at(-1).sessions.map((c) => c.project).filter((n, i, a) => a.indexOf(n) === i);
+  for (const n of others.slice(1)) ws.send(JSON.stringify({ type: 'remove-project', project: n }));
+  await waitFor(() => dropped.length === others.length);
+  const before = errors();
+  ws.send(JSON.stringify({ type: 'remove-project', project: others[0] }));
+  await waitFor(() => errors() > before);
+  assert.match(msgs.filter((m) => m.type === 'error').at(-1).message, /dernier/);
+  assert.equal(dropped.length, others.length);
   ws.close();
 });

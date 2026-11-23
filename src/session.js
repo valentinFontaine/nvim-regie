@@ -454,6 +454,17 @@ export class SessionManager {
     return false;
   }
 
+  /** Une session non sortie existe-t-elle dans ce projet, dossier principal ou chantier ? */
+  liveInProject(projectName) {
+    for (const s of this.sessions.values()) if (!s.exited && s.project.name === projectName) return true;
+    return false;
+  }
+
+  /** Ferme (sans notifier) les sessions sorties d'un projet retiré : sinon elles resteraient invisibles en mémoire. */
+  dropProject(projectName) {
+    for (const [id, s] of this.sessions) if (s.project.name === projectName) { this.sessions.delete(id); s.kill(); }
+  }
+
   /** Renotifie le flux global (la liste des chantiers a changé hors des sessions). */
   refresh() {
     this.#notify();

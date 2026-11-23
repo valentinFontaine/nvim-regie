@@ -340,6 +340,14 @@ function makeCard(c) {
   if (draft) a.append(el('div', 'draft', draft.text));
   if (c.excerpt) a.append(el('div', 'exc', c.excerpt));
   if (c.note) a.append(noteBlock(c));
+  if (c.chantier === null && !cards.some((x) => x.project === c.project && x.id && x.state !== 'error' && x.state !== 'stopped')) {
+    // Retrait : sur la carte du dossier principal, seulement quand plus rien ne tourne dans le projet (le serveur revérifie).
+    const rm = el('button', 'remove', 'Retirer');
+    rm.title = 'Retirer ce dossier du tableau de bord (rien n’est supprimé sur le disque)';
+    rm.onclick = (ev) => { ev.stopPropagation(); confirmRemove(c.project); };
+    rm.onkeydown = (ev) => ev.stopPropagation();
+    head.append(rm);
+  }
   a.onclick = () => openCard(c);
   a.onkeydown = (ev) => { if (ev.key === 'Enter') openCard(c); };
   return a;
@@ -434,6 +442,29 @@ function confirmCandidate(c, list) {
     el('p', 'empty', 'Il sera écrit dans config.json et suivi tout de suite, sans redémarrage.'),
     row, candMsgEl,
   );
+}
+
+// ---------- Retrait d'un dossier (config.json seulement, confirmation appuyée) ----------
+function confirmRemove(project) {
+  const n = cards.filter((x) => x.project === project && x.chantier !== null && !x.id).length;
+  const ok = el('button', 'opt danger', 'Oui, le retirer');
+  const back = el('button', 'opt', 'Annuler');
+  candMsgEl = el('p', 'warn');
+  candMsgEl.hidden = true;
+  ok.onclick = () => { ok.disabled = true; send({ type: 'remove-project', project }); };
+  back.onclick = () => candDlg.close();
+  const row = el('div', 'row');
+  row.append(back, ok);
+  candDlg.replaceChildren(
+    el('h2', 'danger', `⚠ Attention : retirer « ${project} » de l'interface ?`),
+    el('p', null, 'Le dossier disparaîtra du tableau de bord et de config.json.'),
+    el('p', 'empty', 'Rien n’est supprimé sur le disque : ni le dossier, ni la branche, ni les transcripts. '
+      + 'Tu pourras le réajouter avec « + Dossier ».'),
+    ...(n ? [el('p', 'warn', `${n} chantier${n > 1 ? 's' : ''} (worktree${n > 1 ? 's' : ''}) de ce projet ne seront plus visibles mais resteront sur le disque.`)] : []),
+    row, candMsgEl,
+  );
+  if (!candDlg.open) candDlg.showModal();
+  back.focus(); // Entrée par réflexe annule, ne retire pas
 }
 
 closeChantierBtn.onclick = () => {
@@ -814,8 +845,12 @@ function connect() {
       if (candDlg.open) candDlg.close();
       status.textContent = `dossier ajouté : ${msg.name}`;
     }
+    else if (msg.type === 'project-removed') {
+      if (candDlg.open) candDlg.close();
+      status.textContent = `dossier retiré : ${msg.name}`;
+    }
     else if (msg.type === 'error' && current === null) {
-      // Tableau de bord : une erreur ne concerne ni session ni sélecteur (ex. ajout de dossier refusé).
+      // Tableau de bord : une erreur ne concerne ni session ni sélecteur (ex. ajout ou retrait de dossier refusé).
       status.textContent = `erreur : ${msg.message}`;
       if (candDlg.open && candMsgEl?.isConnected) {
         candMsgEl.textContent = `Refusé : ${msg.message}`;

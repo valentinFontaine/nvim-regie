@@ -85,6 +85,12 @@
     #cand-dlg .opt { display: block; width: 100%; text-align: left; margin: .25rem 0; }
     #cand-dlg .opt .p { display: block; color: var(--muted); font-size: .85em; }
     #cand-dlg .row { display: flex; gap: .5rem; margin-top: .75rem; }
+    #cand-dlg h2.danger { color: var(--err); }
+    #cand-dlg .opt.danger { background: var(--err); color: #fff; font-weight: 600; }
+    #cand-dlg .warn { color: #f59e0b; }
+    .card .remove { font-size: .75em; padding: 0 .4rem; opacity: .45; }
+    .card:hover .remove, .card .remove:focus { opacity: 1; }
+    .card .remove:hover { color: var(--err); border-color: var(--err); }
     .card .note { margin-top: .35rem; border-top: 1px solid #333; padding-top: .25rem; font-size: .85em; color: #bbb; }
     .card .note .nx { white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
     .card .note button { margin-top: .2rem; font-size: .85em; }

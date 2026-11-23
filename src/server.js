@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { WebSocketServer } from 'ws';
-import { loadConfig, configPath, addProject } from './config.js';
+import { loadConfig, configPath, addProject, removeProject } from './config.js';
 import { listCandidates } from './candidates.js';
 import { SessionManager, claudeArgs } from './session.js';
 import { findTranscript, defaultProjectsRoot, acceptTranscript } from './transcript.js';
@@ -105,6 +105,7 @@ export function createApp({
   chantierNote = () => null, // (project, branche) → texte de la note ou null
   candidates = (tracked) => listCandidates({ tracked }), // dossiers proposables à l'ajout
   saveProject = (project) => addProject(configPath(), project), // écrit config.json, renvoie le projet validé
+  dropProject = (name) => removeProject(configPath(), name), // retire de config.json (jamais le dossier)
 }) {
   const { port } = config;
   const server = http.createServer((req, res) => {
@@ -322,6 +323,20 @@ export function createApp({
           const added = saveProject({ name: cand.name, path: cand.path });
           config.projects.push(added); // même tableau : les abonnés du flux global le gardent par référence
           reply({ type: 'project-added', name: added.name });
+          sessions.refresh();
+        } else if (msg.type === 'remove-project') {
+          // Retire le projet de la liste suivie : rien n'est supprimé sur le disque (dossier, worktrees, transcripts).
+          const project = findProject();
+          if (!project) return reply({ type: 'error', message: 'projet inconnu' });
+          if (sessions.liveInProject(project.name)) {
+            return reply({ type: 'error', message: `une session tourne encore dans ${project.name} (dossier ou chantier) : ferme-la d'abord` });
+          }
+          if (config.projects.length <= 1) return reply({ type: 'error', message: 'impossible de retirer le dernier projet suivi' });
+          dropProject(project.name);
+          const i = config.projects.indexOf(project);
+          if (i >= 0) config.projects.splice(i, 1); // même tableau : les abonnés du flux global le gardent par référence
+          sessions.dropProject(project.name);
+          reply({ type: 'project-removed', name: project.name });
           sessions.refresh();
         } else if (msg.type === 'close') {
           if (session && session.id === msg.id) { if (unsub) unsub(); unsub = null; session = null; }

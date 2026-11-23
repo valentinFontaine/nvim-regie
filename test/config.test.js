@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { validateConfig, validateProject, addProject } from '../src/config.js';
+import { validateConfig, validateProject, addProject, removeProject } from '../src/config.js';
 
 const NVIM = process.execPath; // un chemin absolu qui existe
 
@@ -59,4 +59,29 @@ test('addProject : doublon (nom ou dossier), dossier invalide, fichier illisible
   fs.writeFileSync(t.file, '{pas du json');
   assert.throws(() => addProject(t.file, { name: 'b', path: autre }), /illisible/);
   assert.equal(fs.readFileSync(t.file, 'utf8'), '{pas du json');
+});
+
+test('removeProject : retire par nom, autres clés intactes, écriture atomique', () => {
+  const t = tmp();
+  const autre = path.join(t.base, 'autre');
+  fs.mkdirSync(autre);
+  const avant = { port: 47601, projects: [{ name: 'a', path: t.dir }, { name: 'b', path: autre }], nvimPath: NVIM, inconnue: [1] };
+  fs.writeFileSync(t.file, JSON.stringify(avant, null, 2));
+  assert.deepEqual(removeProject(t.file, 'a'), { name: 'a', path: t.dir });
+  const apres = JSON.parse(fs.readFileSync(t.file, 'utf8'));
+  assert.deepEqual(apres.projects, [{ name: 'b', path: autre }]);
+  assert.deepEqual({ ...apres, projects: null }, { ...avant, projects: null }, 'autres clés intactes');
+  assert.deepEqual(fs.readdirSync(t.base).sort(), ['autre', 'config.json', 'projet'], 'aucun fichier temporaire laissé');
+  assert.ok(fs.existsSync(t.dir), "le dossier du projet n'est jamais touché");
+});
+
+test('removeProject : nom inconnu, dernier projet, fichier illisible → refus, fichier inchangé', () => {
+  const t = tmp();
+  const texte = JSON.stringify({ projects: [{ name: 'a', path: t.dir }], nvimPath: NVIM });
+  fs.writeFileSync(t.file, texte);
+  assert.throws(() => removeProject(t.file, 'zz'), /inconnu/);
+  assert.throws(() => removeProject(t.file, 'a'), /dernier/);
+  assert.equal(fs.readFileSync(t.file, 'utf8'), texte);
+  fs.writeFileSync(t.file, '{pas du json');
+  assert.throws(() => removeProject(t.file, 'a'), /illisible/);
 });

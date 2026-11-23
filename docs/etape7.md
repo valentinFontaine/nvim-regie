@@ -65,4 +65,11 @@ La liste des projets reste fermée (`config.json`), mais elle s'alimente depuis 
 - `src/config.js` : `validateProject` (extrait de `validateConfig`) et `addProject` : relit `config.json`, valide, n'ajoute que dans `projects` (autres clés conservées), écriture atomique (fichier temporaire + rename).
 - WebSocket : `list-candidates` → `candidates` ; `add-project {path}` → `project-added`. Le client ne désigne qu'un chemin : le serveur le retrouve dans SA liste recalculée, sinon « dossier non proposé ». Le nom est celui du serveur. Le projet est ajouté au tableau `config.projects` existant (les abonnés du flux global le gardent par référence), puis le flux est renotifié : pas de redémarrage.
 - Interface : bouton « + Dossier » (tableau de bord), dialogue de liste, puis confirmation (nom + chemin) avant l'écriture.
-- Limite : un dossier ajouté à chaud n'est retiré qu'en éditant `config.json` à la main.
+
+## Retrait d'un dossier depuis l'interface (fait, à valider à la main)
+
+Pour désencombrer le tableau de bord des projets finis ou en pause.
+- Bouton « Retirer » sur la carte du **dossier principal** d'un projet, affiché seulement quand aucune session n'y tourne (dossier ou chantier). Dialogue « ⚠ Attention » ; le focus est sur « Annuler » ; il signale les chantiers (worktrees) qui deviendront invisibles.
+- `src/config.js` : `removeProject(file, name)` relit `config.json`, retire l'entrée par nom (autres clés conservées), écriture atomique (mêmes `readRaw`/`writeAtomic` que `addProject`). Refuse un nom inconnu et le **dernier** projet (`validateConfig` en exige au moins un : le serveur ne redémarrerait plus).
+- WebSocket : `remove-project {project}` → `project-removed`. Le serveur revérifie : projet connu, aucune session vivante (`liveInProject`, chantiers compris), pas le dernier. Puis il retire le projet du tableau `config.projects` (même référence) et ferme les sessions sorties restées en mémoire (`dropProject`), et renotifie le flux.
+- **Rien n'est supprimé sur le disque** : ni le dossier, ni les worktrees, ni les branches, ni les transcripts. Le projet redevient candidat de « + Dossier » ; réajouté, il retrouve ses chantiers et ses sessions passées (« Reprendre… »).

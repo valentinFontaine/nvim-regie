@@ -41,27 +41,50 @@ export function validateProject(p, names, label = 'projet') {
  * même inconnues, sont conservées), écriture atomique (fichier temporaire puis rename).
  */
 export function addProject(file, project) {
-  let raw;
-  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
-    throw new Error(`config.json illisible (${file}) : ${e.message}`);
-  }
-  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.projects)) throw new Error('config.json : "projects" absent');
+  const raw = readRaw(file);
   const names = new Set(raw.projects.map((p) => p?.name));
   const added = validateProject(project, names, 'projet');
   const lower = (p) => path.resolve(String(p)).toLowerCase();
   if (raw.projects.some((p) => typeof p?.path === 'string' && lower(p.path) === lower(added.path))) {
     throw new Error(`config.json : dossier déjà suivi : ${added.path}`);
   }
-  const next = { ...raw, projects: [...raw.projects, added] };
+  writeAtomic(file, { ...raw, projects: [...raw.projects, added] });
+  return added;
+}
+
+/**
+ * Retire un projet de config.json (par nom). Ne touche jamais au dossier du projet ni à ses worktrees.
+ * Refuse le dernier projet : validateConfig en exige au moins un, le serveur ne redémarrerait plus.
+ */
+export function removeProject(file, name) {
+  const raw = readRaw(file);
+  const i = raw.projects.findIndex((p) => p?.name === name);
+  if (i < 0) throw new Error(`config.json : projet inconnu : ${name}`);
+  if (raw.projects.length <= 1) throw new Error('impossible de retirer le dernier projet suivi');
+  const removed = raw.projects[i];
+  writeAtomic(file, { ...raw, projects: raw.projects.filter((_, j) => j !== i) });
+  return removed;
+}
+
+function readRaw(file) {
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) {
+    throw new Error(`config.json illisible (${file}) : ${e.message}`);
+  }
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.projects)) throw new Error('config.json : "projects" absent');
+  return raw;
+}
+
+/** Écriture atomique : fichier temporaire puis rename. */
+function writeAtomic(file, obj) {
   const tmp = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
     fs.renameSync(tmp, file);
   } catch (e) {
     try { fs.rmSync(tmp, { force: true }); } catch { /* déjà absent */ }
     throw e;
   }
-  return added;
 }
 
 /** Valide et normalise une config brute. Lève une Error au message clair. */
