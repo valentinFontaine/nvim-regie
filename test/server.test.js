@@ -1,5 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,6 +26,7 @@ const candidatesCalls = [];
 const saved = [];
 const dropped = [];
 let failSave = false;
+const launched = []; // lanceurs factices : rien n'est jamais ouvert pendant les tests
 const pastCalls = [];
 const chantiers = {
   list: (p) => (p.name === 'demo' ? [...fakeWt.values()].sort((a, b) => a.name.localeCompare(b.name)) : []),
@@ -64,6 +66,8 @@ before(async () => {
       return p;
     },
     dropProject: (name) => { dropped.push(name); },
+    openWith: (abs) => { launched.push(['open', abs]); },
+    reveal: (abs) => { launched.push(['reveal', abs]); },
     chantierNote: (p, branch) => (p.name === 'demo' && branch === 'x' ? '**Objectif** : o\n\ntexte' : null),
     pastSessions: (place) => {
       pastCalls.push(place);
@@ -591,4 +595,91 @@ test('WS : remove-project refusé si session vivante, sinon retiré de la config
   assert.match(msgs.filter((m) => m.type === 'error').at(-1).message, /dernier/);
   assert.equal(dropped.length, others.length);
   ws.close();
+});
+
+// ---------- Liens vers les fichiers cités par l'agent (src/files.js) ----------
+
+async function startedSession() {
+  const { ws, msgs } = await openCollect();
+  ws.send(JSON.stringify({ type: 'start', project: 'demo', cols: 80, rows: 24 }));
+  await waitFor(() => msgs.some((m) => m.type === 'started'));
+  return { ws, msgs, id: msgs.find((m) => m.type === 'started').id };
+}
+const fixture = (name) => fs.realpathSync.native(path.join(process.cwd(), 'test', 'fixtures', name));
+
+test('WS : resolve-paths résout dans le dossier de la session, ignore le reste ; sans session → erreur', async () => {
+  closeAll();
+  const lone = await openCollect();
+  lone.ws.send(JSON.stringify({ type: 'resolve-paths', paths: ['test/fixtures/pixel.png'] }));
+  await waitFor(() => lone.msgs.some((m) => m.type === 'error'));
+  lone.ws.close();
+
+  const { ws, msgs } = await startedSession();
+  ws.send(JSON.stringify({
+    type: 'resolve-paths',
+    paths: ['test/fixtures/lignes.txt:3', 'test/fixtures/pixel.png', 'test/fixtures', 'test/fixtures/page.html',
+      '../../Windows/win.ini', 'test/absent.js', 'mot', 42],
+  }));
+  await waitFor(() => msgs.some((m) => m.type === 'paths-resolved'));
+  const { items } = msgs.find((m) => m.type === 'paths-resolved');
+  assert.deepEqual(items['test/fixtures/lignes.txt:3'], { abs: fixture('lignes.txt'), kind: 'text', line: 3 });
+  assert.equal(items['test/fixtures/pixel.png'].kind, 'image');
+  assert.equal(items['test/fixtures'].kind, 'dir');
+  assert.equal(items['test/fixtures/page.html'].kind, 'html');
+  assert.deepEqual(Object.keys(items).sort(),
+    ['test/fixtures', 'test/fixtures/lignes.txt:3', 'test/fixtures/page.html', 'test/fixtures/pixel.png']);
+
+  ws.send(JSON.stringify({ type: 'resolve-paths', paths: Array.from({ length: 201 }, () => 'a/b.js') }));
+  await waitFor(() => msgs.some((m) => m.type === 'error'));
+  ws.close();
+  closeAll();
+});
+
+test('WS : os-open seulement pour html/doc ; jamais un script ; reveal pour tout fichier résolu', async () => {
+  closeAll();
+  launched.length = 0;
+  const { ws, msgs } = await startedSession();
+  const errors = () => msgs.filter((m) => m.type === 'error').length;
+  ws.send(JSON.stringify({ type: 'os-open', path: 'test/fixtures/script.ps1' }));
+  await waitFor(() => errors() === 1);
+  ws.send(JSON.stringify({ type: 'os-open', path: 'test/fixtures/lignes.txt' }));
+  await waitFor(() => errors() === 2);
+  ws.send(JSON.stringify({ type: 'os-open', path: '../../Windows/win.ini' }));
+  await waitFor(() => errors() === 3);
+  assert.deepEqual(launched, [], 'rien lancé');
+
+  ws.send(JSON.stringify({ type: 'os-open', path: 'test/fixtures/page.html' }));
+  ws.send(JSON.stringify({ type: 'reveal', path: 'test/fixtures/script.ps1' }));
+  await waitFor(() => launched.length === 2);
+  assert.deepEqual(launched, [['open', fixture('page.html')], ['reveal', fixture('script.ps1')]]);
+  ws.close();
+  closeAll();
+});
+
+test('WS : open-file refusé pour une image ou hors dossier (le cas valide est testé avec un vrai nvim)', async () => {
+  closeAll();
+  const { ws, msgs } = await startedSession();
+  ws.send(JSON.stringify({ type: 'open-file', path: 'test/fixtures/pixel.png' }));
+  ws.send(JSON.stringify({ type: 'open-file', path: '../../Windows/win.ini' }));
+  await waitFor(() => msgs.filter((m) => m.type === 'error').length === 2);
+  ws.close();
+  closeAll();
+});
+
+test('/api/file : cookie exigé ; image de la session servie avec CSP ; texte, hors dossier ou session inconnue → 404', async () => {
+  closeAll();
+  const { ws, id } = await startedSession();
+  const c = await cookie();
+  const q = (p, sid = id) => `/api/file?session=${encodeURIComponent(sid)}&path=${encodeURIComponent(p)}`;
+  assert.equal((await get(q('test/fixtures/pixel.png'))).status, 401);
+  const ok = await get(q('test/fixtures/pixel.png'), { cookie: c });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers['content-type'], 'image/png');
+  assert.match(ok.headers['content-security-policy'], /default-src 'none'/);
+  assert.equal(ok.headers['x-content-type-options'], 'nosniff');
+  assert.equal((await get(q('test/fixtures/lignes.txt'), { cookie: c })).status, 404);
+  assert.equal((await get(q('../../Windows/win.ini'), { cookie: c })).status, 404);
+  assert.equal((await get(q('test/fixtures/pixel.png', 'inconnue'), { cookie: c })).status, 404);
+  ws.close();
+  closeAll();
 });

@@ -1,5 +1,6 @@
 import { renderMarkdown, toolTarget } from '/render.js';
 import { ansiSegments } from '/ansi.js';
+import { createPathRefs } from '/pathrefs.js';
 import {
   COLUMNS, groupByColumn, formatDuration, titleCount, titleFor, nextWaiting, formatAgo, turnLine, writersIn, sessionName,
   pastSessionAction, parseRoute, cardHref, placeTitle, bgBadge, draftBadge,
@@ -47,16 +48,16 @@ function setDrawer(open) {
 }
 toggle.onclick = () => setDrawer(!drawer.classList.contains('open'));
 
-// Neovim sous la conversation (défaut) ou à droite ; choix retenu par ce navigateur seulement.
+// Neovim à droite quand la fenêtre est large (plein écran), en bas quand elle est étroite.
+// Le bouton force l'autre disposition jusqu'au prochain franchissement du seuil.
 const layoutBtn = document.getElementById('layout');
+const wide = window.matchMedia('(min-width: 1400px)');
 function setLayout(right) {
   document.body.classList.toggle('nvim-right', right);
   layoutBtn.textContent = right ? 'Neovim en bas' : 'Neovim à droite';
-  try { localStorage.setItem('nvim-layout', right ? 'right' : 'bottom'); } catch { /* stockage indisponible */ }
 }
-let savedLayout = null;
-try { savedLayout = localStorage.getItem('nvim-layout'); } catch { /* stockage indisponible */ }
-setLayout(savedLayout === 'right');
+setLayout(wide.matches);
+wide.addEventListener('change', (e) => setLayout(e.matches));
 layoutBtn.onclick = () => { setLayout(!document.body.classList.contains('nvim-right')); nterm.focus(); };
 
 let ws = null;
@@ -82,6 +83,20 @@ function el(tag, cls, text) {
   if (text != null) e.textContent = text;
   return e;
 }
+
+// Chemins cités par l'agent : liens résolus par le serveur (voir pathrefs.js).
+const previewDlg = document.getElementById('preview');
+const previewImg = previewDlg.querySelector('img');
+const previewCap = previewDlg.querySelector('figcaption');
+previewDlg.onclick = () => previewDlg.close();
+previewDlg.addEventListener('close', () => previewImg.removeAttribute('src'));
+const pathRefs = createPathRefs({
+  send,
+  el,
+  sessionId: () => currentId,
+  focusNvim: () => nterm.focus(),
+  preview: (src, abs) => { previewImg.src = src; previewCap.textContent = abs; previewDlg.showModal(); },
+});
 
 function bodyFor(item) {
   let body = msgEls.get(item.msgId);
@@ -124,6 +139,7 @@ function addItem(item) {
       const d = el('div', 'md');
       d.innerHTML = renderMarkdown(item.text); // assaini par DOMPurify (render.js)
       body.append(d);
+      pathRefs.scan(d);
     }
   } else if (item.kind === 'thinking') {
     const d = el('details', 'think');
@@ -547,6 +563,7 @@ function resetSessionView() {
   msgEls = new Map();
   pendingEl = null;
   resetLive();
+  pathRefs.reset();
   showStatusLine('');
   toolEls = new Map();
   nfit.fit();
@@ -867,6 +884,7 @@ function connect() {
     else if (msg.type === 'nvim-data') nterm.write(msg.data);
     else if (msg.type === 'nvim-exit') status.textContent = `nvim terminé (code ${msg.code})`;
     else if (msg.type === 'transcript') addItems(msg.items);
+    else if (msg.type === 'paths-resolved') pathRefs.resolved(msg.items);
     else if (msg.type === 'pending') showPending(msg.text);
     else if (msg.type === 'status') showStatusLine(msg.text);
     else if (msg.type === 'transcript-reset') { conv.replaceChildren(); msgEls = new Map(); toolEls = new Map(); pendingEl = null; resetLive(); }

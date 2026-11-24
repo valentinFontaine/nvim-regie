@@ -35,6 +35,14 @@ marked.use({
     code({ text, lang }) {
       return `<pre><code class="hljs">${highlightCode(text, lang)}</code></pre>\n`;
     },
+    // Lien Markdown vers un fichier local (`[app.js](src/app.js#L42)`) : DOMPurify en retirerait
+    // la cible. On le garde comme référence de chemin, que app.js fait résoudre par le serveur.
+    link({ href, tokens }) {
+      if (typeof href !== 'string' || /^[a-z][a-z0-9+.-]+:/i.test(href) || href.startsWith('#')) return false;
+      let target = href;
+      try { target = decodeURI(href); } catch { /* garder tel quel */ }
+      return `<code class="pathref" data-path="${escapeHtml(target)}">${this.parser.parseInline(tokens)}</code>`;
+    },
   },
 });
 

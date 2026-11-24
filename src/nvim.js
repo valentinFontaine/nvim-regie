@@ -105,6 +105,18 @@ export class NvimBridge {
     await this.nvim.lua('return _G.regie_set_answer(...)', [String(text).split('\n')]);
   }
 
+  /** Ouvre `abs` dans un onglet (ou saute à celui qui l'affiche déjà), à `line` si fournie. Chemin en argument Lua. */
+  async openFile(abs, line) {
+    await this.ready;
+    await this.nvim.lua(
+      `local p, l = ...
+vim.cmd('stopinsert')
+vim.cmd('tab drop ' .. vim.fn.fnameescape(p))
+if l then pcall(vim.api.nvim_win_set_cursor, 0, { l, 0 }) end`,
+      Number.isInteger(line) ? [abs, line] : [abs], // pas de null : il deviendrait vim.NIL (truthy) côté Lua
+    );
+  }
+
   write(data) { if (!this.exited) this.pty.write(data); }
   resize(cols, rows) { if (!this.exited) this.pty.resize(cols, rows); }
 

@@ -383,6 +383,12 @@ export class Session {
     if (this.bridge) this.bridge.write(data);
   }
 
+  /** Ouvre un fichier (chemin déjà validé par le serveur) dans un onglet du nvim de la session. */
+  openInNvim(abs, line) {
+    if (!this.bridge) return Promise.reject(new Error('pas de nvim dans cette session'));
+    return this.bridge.openFile(abs, line);
+  }
+
   nvimResize(cols, rows) {
     checkDim(cols, MAX_COLS, 'cols');
     checkDim(rows, MAX_ROWS, 'rows');

@@ -11,6 +11,7 @@ import { findTranscript, defaultProjectsRoot, acceptTranscript } from './transcr
 import { listPastSessions } from './sessions-list.js';
 import { listChantiers, createChantier, removeChantier, cleanChantierName } from './chantiers.js';
 import { readNote, noteExcerpt } from './notes.js';
+import { parseRef, resolveInside, resolveInNotes, classify } from './files.js';
 import {
   COOKIE_NAME, createToken, tokenMatches, parseCookies, originAllowed, hostAllowed,
 } from './security.js';
@@ -30,6 +31,7 @@ const PAGES = {
   '/render.js': path.join(PUBLIC, 'render.js'),
   '/dashboard.js': path.join(PUBLIC, 'dashboard.js'),
   '/ansi.js': path.join(PUBLIC, 'ansi.js'),
+  '/pathrefs.js': path.join(PUBLIC, 'pathrefs.js'),
 };
 // Dossiers servis par préfixe : un seul niveau de nom de fichier sûr par segment, extension imposée.
 const VENDOR_DIRS = [
@@ -66,6 +68,25 @@ export function hooksSettings(port, token, id) {
   const statusLine = { type: 'command', command: `${q(process.execPath)} ${q(RELAY)} ${port} ${token} ${id}` };
   // showThinkingSummaries (défaut false sur 2.1.318) : sans lui, les blocs thinking du JSONL sont vides.
   return JSON.stringify({ hooks, statusLine, showThinkingSummaries: true });
+}
+
+const MAX_PATHS = 200;
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const IMAGE_TYPES = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+  '.webp': 'image/webp', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.svg': 'image/svg+xml',
+};
+
+/** Texte cité -> { abs, kind, line } dans le dossier du projet (ou, à défaut, dans notesDir), ou null.
+ *  Toujours recalculé côté serveur. */
+function resolveRef(projectPath, text, notesDir) {
+  const ref = parseRef(text);
+  if (!ref) return null;
+  const abs = resolveInside(projectPath, ref.rel) ?? resolveInNotes(notesDir, ref.rel);
+  if (!abs) return null;
+  let isDir;
+  try { isDir = fs.statSync(abs).isDirectory(); } catch { return null; }
+  return { abs, kind: classify(abs, isDir), line: ref.line };
 }
 
 const SAFE_SEGMENT =/^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -106,6 +127,8 @@ export function createApp({
   candidates = (tracked) => listCandidates({ tracked }), // dossiers proposables à l'ajout
   saveProject = (project) => addProject(configPath(), project), // écrit config.json, renvoie le projet validé
   dropProject = (name) => removeProject(configPath(), name), // retire de config.json (jamais le dossier)
+  openWith = (abs) => spawn('explorer.exe', [abs], { detached: true, stdio: 'ignore', windowsHide: false }).unref(),
+  reveal = (abs) => spawn('explorer.exe', [`/select,"${abs}"`], { windowsVerbatimArguments: true, detached: true, stdio: 'ignore' }).unref(),
 }) {
   const { port } = config;
   const server = http.createServer((req, res) => {
@@ -146,6 +169,22 @@ export function createApp({
       const text = chantier ? chantierNote(project, chantier.branch ?? chantier.name) : null;
       if (text === null) return send(404, 'Not Found');
       return send(200, JSON.stringify({ text }), { 'Content-Type': 'application/json; charset=utf-8' });
+    }
+
+    if (url.pathname === '/api/file') {
+      const s = sessions.get(url.searchParams.get('session'));
+      const r = s ? resolveRef(s.project.path, url.searchParams.get('path'), config.notesDir) : null;
+      if (!r || (r.kind !== 'image' && r.kind !== 'svg')) return send(404, 'Not Found');
+      let st;
+      try { st = fs.statSync(r.abs); } catch { return send(404, 'Not Found'); }
+      if (!st.isFile() || st.size > MAX_IMAGE_BYTES) return send(404, 'Not Found');
+      return fs.readFile(r.abs, (err, data) => {
+        if (err) return send(404, 'Not Found');
+        send(200, data, {
+          'Content-Type': IMAGE_TYPES[path.extname(r.abs).toLowerCase()] ?? 'application/octet-stream',
+          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'",
+        });
+      });
     }
 
     if (url.pathname === '/vendor/highlight/core.js') {
@@ -357,6 +396,29 @@ export function createApp({
           if (session) session.nvimWrite(msg.data);
         } else if (msg.type === 'nvim-resize') {
           if (session) session.nvimResize(msg.cols, msg.rows);
+        } else if (msg.type === 'resolve-paths') {
+          if (!session) return reply({ type: 'error', message: 'aucune session' });
+          if (!Array.isArray(msg.paths) || msg.paths.length > MAX_PATHS) return reply({ type: 'error', message: 'trop de chemins' });
+          const items = {};
+          for (const t of msg.paths) {
+            if (typeof t !== 'string') continue;
+            const r = resolveRef(session.project.path, t, config.notesDir);
+            if (r) items[t] = r;
+          }
+          reply({ type: 'paths-resolved', items });
+        } else if (msg.type === 'open-file' || msg.type === 'os-open' || msg.type === 'reveal') {
+          if (!session) return reply({ type: 'error', message: 'aucune session' });
+          const r = resolveRef(session.project.path, msg.path, config.notesDir);
+          const allowed = {
+            'open-file': ['text', 'html', 'svg', 'dir'],
+            'os-open': ['html', 'doc', 'dir'],
+            reveal: null,
+          }[msg.type];
+          if (!r || (allowed && !allowed.includes(r.kind))) return reply({ type: 'error', message: 'fichier non autorisé' });
+          if (msg.type === 'open-file') {
+            session.openInNvim(r.abs, r.line).catch((e) => reply({ type: 'error', message: e.message }));
+          } else if (msg.type === 'os-open') openWith(r.abs);
+          else reveal(r.abs);
         } else {
           reply({ type: 'error', message: 'type inconnu' });
         }
