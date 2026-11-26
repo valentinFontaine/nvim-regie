@@ -241,3 +241,18 @@ test("toItems : le modèle d'une réponse est porté par ses items (hors « <syn
   assert.equal(toItems(e('<synthetic>'))[0].model, undefined);
   assert.equal(toItems(e(42))[0].model, undefined);
 });
+
+// Tâche finie pendant que claude travaille (observé sur 2.1.3xx, cad-illustrator 2026-11-25) : la notification
+// est mise en file (queue-operation/enqueue) au lieu d'arriver en message user ; c'est le seul signal toujours présent.
+test('toItems : notification mise en file (queue-operation enqueue) → item task-end', () => {
+  const e = { type: 'queue-operation', operation: 'enqueue', timestamp: '2026-11-25T21:23:11.432Z', sessionId: 's', content: NOTIF('bdt911eez', 'completed') };
+  assert.deepEqual(toItems(e), [{ msgId: null, role: 'system', ts: '2026-11-25T21:23:11.432Z', kind: 'task-end', taskId: 'bdt911eez', status: 'completed' }]);
+});
+
+test('toItems : queue-operation remove/dequeue, prompt ordinaire en file, id non conforme → rien', () => {
+  assert.deepEqual(toItems({ type: 'queue-operation', operation: 'remove', content: NOTIF('b1', 'completed') }), []);
+  assert.deepEqual(toItems({ type: 'queue-operation', operation: 'dequeue' }), []);
+  assert.deepEqual(toItems({ type: 'queue-operation', operation: 'enqueue', content: 'fais ceci ensuite' }), []);
+  assert.deepEqual(toItems({ type: 'queue-operation', operation: 'enqueue', content: NOTIF('../x', 'completed') }), []);
+  assert.deepEqual(toItems({ type: 'queue-operation', operation: 'enqueue', content: 42 }), []);
+});

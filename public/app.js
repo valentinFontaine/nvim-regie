@@ -111,6 +111,7 @@ function bodyFor(item) {
 }
 
 function addItem(item) {
+  if (item.kind === 'task-end') return; // signal d'état (tâche de fond finie), rien à afficher
   if (item.kind === 'tool_result') {
     const d = toolEls.get(item.toolUseId);
     const pre = el('pre', `result${item.isError ? ' error' : ''}`, item.text || '(vide)');

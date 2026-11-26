@@ -18,7 +18,7 @@ Les exemples sont synthétiques. Le parseur (`src/transcript.js`) ignore tout ce
 | `user` | affiché (voir ci-dessous) |
 | `assistant` | affiché, regroupé par `message.id` |
 | `attachment`, `system/*` (`turn_duration`, `stop_hook_summary`, `compact_boundary`, `away_summary`) | ignoré en étape 2 |
-| `api-request`, `api-request-blob`, `api-request-shape`, `queue-operation`, `last-prompt`, `mode`, `permission-mode`, `ai-title`, `file-history-snapshot`, `file-history-delta`, `cost-state`, `atis-latch` | bruit interne, ignoré |
+| `api-request`, `api-request-blob`, `api-request-shape`, `last-prompt`, `mode`, `permission-mode`, `ai-title`, `file-history-snapshot`, `file-history-delta`, `cost-state`, `atis-latch` | bruit interne, ignoré |
 
 Champs communs : `uuid`, `parentUuid`, `timestamp` (ISO), `sessionId`, `cwd`, `gitBranch`, `version`,
 `isSidechain`, `isMeta`.
@@ -75,7 +75,7 @@ pendant que la tâche tourne : la régie suit donc les tâches elle-même (`src/
 
 - La notification peut arriver en plein tour (entre un `tool_use` et son `tool_result`).
 - Se fier à `origin.kind`, pas à `turnOrigin: "task_notification"` : ce dernier apparaît aussi sur un résumé de compaction.
-- Les mêmes notifications existent aussi en `queue-operation` et `attachment/queued_command` (ignorés).
+- **Fin fiable : `queue-operation` avec `operation === "enqueue"`** et `content` = le même texte `<task-notification>…`. Toute notification passe par là (mesuré le 2026-11-26 sur 9 transcripts cad-illustrator : 57 tâches, 44 fermées ainsi et les 13 autres par `TaskStop`, aucune restée ouverte). Le message `user` ci-dessus **manque** quand la tâche finit pendant que claude travaille : la notification reste en file puis arrive en `attachment/queued_command`. `toItems` en tire un item `task-end` ; les autres `queue-operation` (`remove`, `dequeue`) et `queued_command` sont ignorés.
 - Non établi : valeur `killed` de `status` ; comportement à la fermeture de la session avec des tâches ouvertes ;
   si un hook part au réveil par notification (la régie n'en dépend pas).
 

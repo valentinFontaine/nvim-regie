@@ -84,7 +84,7 @@ export function trackBg(bg, items, now = Date.now()) {
       const { [it.toolUseId]: label, ...rest } = launch;
       launch = rest;
       tasks = [...tasks.filter((t) => t.id !== it.backgroundTaskId), { id: it.backgroundTaskId, label, since: now }];
-    } else if (it.kind === 'text' && it.role === 'user' && it.origin === 'task-notification' && it.taskId) {
+    } else if ((it.kind === 'task-end' || (it.kind === 'text' && it.role === 'user' && it.origin === 'task-notification')) && it.taskId) {
       tasks = tasks.filter((t) => t.id !== it.taskId);
     } else if (it.kind === 'tool_use' && it.name === 'TaskStop' && typeof it.input?.task_id === 'string') {
       tasks = tasks.filter((t) => t.id !== it.input.task_id);

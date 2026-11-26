@@ -181,3 +181,9 @@ test('trackBg : un Bash chaîné par && ou sans fichier n\'ouvre rien ; run_in_b
   bg = trackBg(initialBg(), [{ ...bashFg('t3', 'python z.py &'), input: { command: 'python z.py &', run_in_background: true } }, started('t3', 'b9')], 1);
   assert.deepEqual(bg.tasks.map((t) => t.id), ['b9'], 'pas de doublon détaché');
 });
+
+test('trackBg : task-end (notification mise en file) ferme la tâche', () => {
+  let bg = trackBg(initialBg(), [launch('t1', 'x'), started('t1', 'b1'), launch('t2', 'y'), started('t2', 'b2')], 1);
+  bg = trackBg(bg, [{ kind: 'task-end', role: 'system', taskId: 'b1', status: 'completed' }], 2);
+  assert.deepEqual(bg.tasks.map((t) => t.id), ['b2']);
+});

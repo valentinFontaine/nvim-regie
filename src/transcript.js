@@ -106,6 +106,15 @@ export function toItems(entry) {
       const ts = typeof entry.timestamp === 'string' ? entry.timestamp : null;
       return [{ msgId: entry.uuid ?? null, role: 'system', ts, kind: 'turn', durationMs: entry.durationMs }];
     }
+    // Fin de tâche de fond mise en file (observé sur 2.1.3xx) : toute notification passe par un enqueue,
+    // alors que le message user (origin task-notification) manque quand claude était occupé.
+    if (entry.type === 'queue-operation') {
+      if (entry.operation !== 'enqueue' || typeof entry.content !== 'string' || !entry.content.startsWith('<task-notification>')) return [];
+      const { taskId, status } = notifFields(entry.content);
+      if (!taskId) return [];
+      const ts = typeof entry.timestamp === 'string' ? entry.timestamp : null;
+      return [{ msgId: null, role: 'system', ts, kind: 'task-end', taskId, status }];
+    }
     if (entry.type !== 'user' && entry.type !== 'assistant') return [];
     const msg = entry.message;
     if (!msg || typeof msg !== 'object') return [];
