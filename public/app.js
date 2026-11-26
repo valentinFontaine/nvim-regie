@@ -98,6 +98,19 @@ const pathRefs = createPathRefs({
   preview: (src, abs) => { previewImg.src = src; previewCap.textContent = abs; previewDlg.showModal(); },
 });
 
+/** Accueil d'une session vide : masqué en CSS dès que la conversation a un autre enfant. */
+function welcomeEl() {
+  const w = el('div', 'welcome');
+  w.innerHTML = '<svg viewBox="0 0 100 120" width="64" height="77" aria-hidden="true">'
+    + '<polygon points="4,28 30,2 30,118 4,92" fill="#0f8bd6"/>'
+    + '<polygon points="70,2 96,28 96,92 70,118" fill="#5da83b"/>'
+    + '<polygon points="30,2 44,2 70,118 56,118" fill="#7cc24a"/></svg>';
+  w.append(el('h1', null, 'Nvim-Regie'), el('p', null, 'Prêt : écris ton prompt dans Neovim.'));
+  return w;
+}
+
+function clearConv() { conv.replaceChildren(welcomeEl()); }
+
 function bodyFor(item) {
   let body = msgEls.get(item.msgId);
   if (!body) {
@@ -560,7 +573,7 @@ let pickerBack = null;  // session à rouvrir si on annule « + Session »
 function resetSessionView() {
   term.reset();
   nterm.reset();
-  conv.replaceChildren();
+  clearConv();
   msgEls = new Map();
   pendingEl = null;
   resetLive();
@@ -888,7 +901,7 @@ function connect() {
     else if (msg.type === 'paths-resolved') pathRefs.resolved(msg.items);
     else if (msg.type === 'pending') showPending(msg.text);
     else if (msg.type === 'status') showStatusLine(msg.text);
-    else if (msg.type === 'transcript-reset') { conv.replaceChildren(); msgEls = new Map(); toolEls = new Map(); pendingEl = null; resetLive(); }
+    else if (msg.type === 'transcript-reset') { clearConv(); msgEls = new Map(); toolEls = new Map(); pendingEl = null; resetLive(); }
     else if (msg.type === 'state') showState(msg);
     else if (msg.type === 'exit') status.textContent = `claude terminé (code ${msg.code})`;
     else if (msg.type === 'error') {
